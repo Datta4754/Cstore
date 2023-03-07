@@ -88,6 +88,10 @@ SerializeTableFooter(TableFooter *tableFooter)
 		protobuf__stripe_metadata__init(protobufStripeMetadata);
 		protobufStripeMetadata->has_fileoffset = true;
 		protobufStripeMetadata->fileoffset = stripeMetadata->fileOffset;
+
+		protobufStripeMetadata->has_bloomlistlength = true;
+		protobufStripeMetadata->bloomlistlength = stripeMetadata->bloomListLength;
+
 		protobufStripeMetadata->has_skiplistlength = true;
 		protobufStripeMetadata->skiplistlength = stripeMetadata->skipListLength;
 		protobufStripeMetadata->has_datalength = true;
@@ -129,6 +133,9 @@ SerializeStripeFooter(StripeFooter *stripeFooter)
 	uint8 *stripeFooterData = NULL;
 	uint32 stripeFooterSize = 0;
 
+    protobufStripeFooter.n_bloomlistsizearray = stripeFooter->columnCount;
+	protobufStripeFooter.bloomlistsizearray = (uint64_t *) stripeFooter->bloomListSizeArray;
+	
 	protobufStripeFooter.n_skiplistsizearray = stripeFooter->columnCount;
 	protobufStripeFooter.skiplistsizearray = (uint64_t *) stripeFooter->skipListSizeArray;
 	protobufStripeFooter.n_existssizearray = stripeFooter->columnCount;
@@ -148,6 +155,32 @@ SerializeStripeFooter(StripeFooter *stripeFooter)
 	return stripeFooterBuffer;
 }
 
+/*
+
+StringInfo SerializeBloomFooter(BloomFooter *bloomFooter)
+{
+	StringInfo bloomFooterBuffer = NULL;
+	Protobuf__BloomFooter protobufBloomFooter = PROTOBUF__BLOOM_FOOTER__INIT;
+	uint8 *bloomFooterData = NULL;
+	uint32 bloomFooterSize = 0;
+
+	protobufBloomFooter.n_bloomsizearray = bloomFooter->columnCount;
+	protobufBloomFooter.bloomsizearray = (uint64_t *) bloomFooter->bloomSizeArray;
+
+	bloomFooterSize = protobuf__bloom_footer__get_packed_size(&protobufBloomFooter);
+	bloomFooterData = palloc0(bloomFooterSize);
+	protobuf__bloom_footer__pack(&protobufBloomFooter, bloomFooterData);
+
+	bloomFooterBuffer = palloc0(sizeof(StringInfoData));
+	bloomFooterBuffer->len = bloomFooterSize;
+	bloomFooterBuffer->maxlen = bloomFooterSize;
+	bloomFooterBuffer->data = (char *) bloomFooterData;
+
+	return bloomFooterBuffer;
+
+}
+
+*/
 
 /*
  * SerializeColumnSkipList serializes a column skip list, where the colum skip
@@ -221,6 +254,46 @@ SerializeColumnSkipList(ColumnBlockSkipNode *blockSkipNodeArray, uint32 blockCou
 
 	return blockSkipListBuffer;
 }
+
+
+
+StringInfo SerializeColumnBloomList(bool *bloomArray, uint32 m)
+{
+	StringInfo bloomListBuffer = NULL;
+	uint8 *bloomListData = NULL;
+	uint32 bloomListSize = 0;
+
+
+	Protobuf__BloomList protobufBloomList = PROTOBUF__BLOOM_LIST__INIT;
+
+	protobuf_c_boolean *bloomNodeArray = NULL;
+
+	
+	bloomNodeArray = palloc0(m*sizeof(bool));
+	
+    
+	memcpy(bloomNodeArray,bloomArray,m*sizeof(bool));
+
+ 
+	protobufBloomList.n_bloomnodearray = m;
+	protobufBloomList.bloomnodearray = bloomNodeArray;
+	
+	bloomListSize = protobuf__bloom_list__get_packed_size(&protobufBloomList);
+	bloomListData = palloc0(bloomListSize);
+
+	protobuf__bloom_list__pack(&protobufBloomList,bloomListData);
+
+
+	bloomListBuffer = palloc0(sizeof(StringInfoData));
+	bloomListBuffer->len = bloomListSize;
+	bloomListBuffer->maxlen = bloomListSize;
+	bloomListBuffer->data = (char *) bloomListData;
+
+	return bloomListBuffer;
+
+}
+
+
 
 
 /*
@@ -301,6 +374,7 @@ DeserializeTableFooter(StringInfo buffer)
 
 		protobufStripeMetadata = protobufTableFooter->stripemetadataarray[stripeIndex];
 		if (!protobufStripeMetadata->has_fileoffset ||
+		    !protobufStripeMetadata->has_bloomlistlength||
 			!protobufStripeMetadata->has_skiplistlength ||
 			!protobufStripeMetadata->has_datalength ||
 			!protobufStripeMetadata->has_footerlength)
@@ -311,6 +385,7 @@ DeserializeTableFooter(StringInfo buffer)
 
 		stripeMetadata = palloc0(sizeof(StripeMetadata));
 		stripeMetadata->fileOffset = protobufStripeMetadata->fileoffset;
+		stripeMetadata->bloomListLength = protobufStripeMetadata->bloomlistlength;
 		stripeMetadata->skipListLength = protobufStripeMetadata->skiplistlength;
 		stripeMetadata->dataLength = protobufStripeMetadata->datalength;
 		stripeMetadata->footerLength = protobufStripeMetadata->footerlength;
@@ -337,6 +412,7 @@ DeserializeStripeFooter(StringInfo buffer)
 {
 	StripeFooter *stripeFooter = NULL;
 	Protobuf__StripeFooter *protobufStripeFooter = NULL;
+	uint64 *bloomListSizeArray = NULL;
 	uint64 *skipListSizeArray = NULL;
 	uint64 *existsSizeArray = NULL;
 	uint64 *valueSizeArray = NULL;
@@ -362,10 +438,12 @@ DeserializeStripeFooter(StringInfo buffer)
 	sizeArrayLength = columnCount * sizeof(uint64);
 
 	skipListSizeArray = palloc0(sizeArrayLength);
+	bloomListSizeArray = palloc0(sizeArrayLength);
 	existsSizeArray = palloc0(sizeArrayLength);
 	valueSizeArray = palloc0(sizeArrayLength);
 
 	memcpy(skipListSizeArray, protobufStripeFooter->skiplistsizearray, sizeArrayLength);
+	memcpy(bloomListSizeArray,protobufStripeFooter->bloomlistsizearray,sizeArrayLength);
 	memcpy(existsSizeArray, protobufStripeFooter->existssizearray, sizeArrayLength);
 	memcpy(valueSizeArray, protobufStripeFooter->valuesizearray, sizeArrayLength);
 
@@ -373,6 +451,7 @@ DeserializeStripeFooter(StringInfo buffer)
 
 	stripeFooter = palloc0(sizeof(StripeFooter));
 	stripeFooter->skipListSizeArray = skipListSizeArray;
+	stripeFooter->bloomListSizeArray = bloomListSizeArray;
 	stripeFooter->existsSizeArray = existsSizeArray;
 	stripeFooter->valueSizeArray = valueSizeArray;
 	stripeFooter->columnCount = columnCount;
@@ -407,6 +486,25 @@ DeserializeBlockCount(StringInfo buffer)
 	return blockCount;
 }
 
+uint32 DeserializeSizeCount(StringInfo buffer)
+{
+	uint32 sizeCount = 0;
+	
+	Protobuf__BloomList *protobufBloomList = NULL;
+
+	protobufBloomList = protobuf__bloom_list__unpack(NULL,buffer->len,(uint8 *) buffer->data);
+	
+
+	if(protobufBloomList == NULL)
+	{
+		ereport(ERROR, (errmsg("could not unpack column store"),
+						errdetail("invalid bloom list buffer")));
+	}
+	sizeCount = protobufBloomList->n_bloomnodearray;
+	protobuf__bloom_list__free_unpacked(protobufBloomList, NULL);
+
+	return sizeCount;
+}
 
 /*
  * DeserializeRowCount deserializes the given column skip list buffer and
@@ -443,6 +541,31 @@ DeserializeRowCount(StringInfo buffer)
 }
 
 
+bool * DeserializeColumnBloomList(StringInfo buffer,uint32 sizeCount)
+{
+	bool *bloomArray = NULL;
+	Protobuf__BloomList *protobufBloomList = NULL;
+	
+	protobufBloomList = protobuf__bloom_list__unpack(NULL, buffer->len,(uint8 *) buffer->data);
+	if(protobufBloomList==NULL)
+	{
+		ereport(ERROR, (errmsg("could not unpack column store"),
+						errdetail("invalid bloom list buffer")));
+	}
+	if(protobufBloomList->n_bloomnodearray!=sizeCount)
+	{
+		ereport(ERROR, (errmsg("could not unpack column store"),
+						errdetail("size bloom node count and size count don't match")));
+	}
+	bloomArray = palloc0(sizeCount*sizeof(bool));
+
+	memcpy(bloomArray,protobufBloomList,sizeCount*sizeof(bool));
+
+	protobuf__bloom_list__free_unpacked(protobufBloomList,NULL);
+
+	return bloomArray;
+
+}
 /*
  * DeserializeColumnSkipList deserializes the given buffer and returns the result as
  * a ColumnBlockSkipNode array. If the number of unpacked block skip nodes are not

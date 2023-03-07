@@ -28,15 +28,22 @@ extern StringInfo SerializeColumnSkipList(ColumnBlockSkipNode *blockSkipNodeArra
 										  uint32 blockCount, bool typeByValue,
 										  int typeLength);
 
+extern StringInfo SerializeColumnBloomList(bool *bloomArray, uint32 m);
+//extern StringInfo SerializeBloomFooter(BloomFooter *bloomFooter);
+
 /* Function declarations for metadata deserialization */
 extern void DeserializePostScript(StringInfo buffer, uint64 *tableFooterLength);
 extern TableFooter * DeserializeTableFooter(StringInfo buffer);
 extern uint32 DeserializeBlockCount(StringInfo buffer);
+
+extern uint32 DeserializeSizeCount(StringInfo buffer);
+
 extern uint32 DeserializeRowCount(StringInfo buffer);
 extern StripeFooter * DeserializeStripeFooter(StringInfo buffer);
 extern ColumnBlockSkipNode * DeserializeColumnSkipList(StringInfo buffer,
 													   bool typeByValue, int typeLength,
 													   uint32 blockCount);
 
+extern bool * DeserializeColumnBloomList(StringInfo buffer,uint32 sizeCount);
 
 #endif   /* CSTORE_SERIALIZATION_H */ 

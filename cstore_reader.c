@@ -63,7 +63,12 @@ static StripeSkipList * LoadStripeSkipList(FILE *tableFile,
 										   uint32 columnCount,
 										   bool *projectedColumnMask,
 										   TupleDesc tupleDescriptor);
-static bool * SelectedBlockMask(StripeSkipList *stripeSkipList,
+
+static StripeBloomList * LoadStripeBloomList(FILE *tableFile, StripeMetadata *stripeMetadata,
+											StripeFooter *stripeFooter,uint32 columnCount,
+											bool *projectedColumnMask, TupleDesc tupleDescriptor);
+
+static bool * SelectedBlockMask(StripeSkipList *stripeSkipList, StripeBloomList *stripeBloomList,
 								List *projectedColumnList, List *whereClauseList);
 static List * BuildRestrictInfoList(List *whereClauseList);
 static Node * BuildBaseConstraint(Var *variable);
@@ -91,6 +96,13 @@ static StringInfo ReadFromFile(FILE *file, uint64 offset, uint32 size);
 static void ResetUncompressedBlockData(ColumnBlockData **blockDataArray,
 									   uint32 columnCount);
 static uint64 StripeRowCount(FILE *tableFile, StripeMetadata *stripeMetadata);
+
+
+
+
+//static BloomFilter * LoadBloomFilter(FILE *tableFile,uint32 columnCount,StripeMetadata *stripeMetadata,bool *projectedColumnMask);
+
+
 
 
 /*
@@ -449,6 +461,7 @@ StripeRowCount(FILE *tableFile, StripeMetadata *stripeMetadata)
 	uint64 footerOffset = 0;
 
 	footerOffset += stripeMetadata->fileOffset;
+	footerOffset += stripeMetadata->bloomListLength;
 	footerOffset += stripeMetadata->skipListLength;
 	footerOffset += stripeMetadata->dataLength;
 
@@ -483,12 +496,23 @@ LoadFilteredStripeBuffers(FILE *tableFile, StripeMetadata *stripeMetadata,
 												  columnCount);
 	bool *projectedColumnMask = ProjectedColumnMask(columnCount, projectedColumnList);
 
+
+
+	StripeBloomList *stripeBloomList = LoadStripeBloomList(tableFile, stripeMetadata,
+															stripeFooter, columnCount,
+															projectedColumnMask,tupleDescriptor);
+
+
+
 	StripeSkipList *stripeSkipList = LoadStripeSkipList(tableFile, stripeMetadata,
 														stripeFooter, columnCount,
 														projectedColumnMask,
 														tupleDescriptor);
+	
+	
 
-	bool *selectedBlockMask = SelectedBlockMask(stripeSkipList, projectedColumnList,
+
+	bool *selectedBlockMask = SelectedBlockMask(stripeSkipList, stripeBloomList, projectedColumnList,
 												whereClauseList);
 
 	StripeSkipList *selectedBlockSkipList =
@@ -497,7 +521,7 @@ LoadFilteredStripeBuffers(FILE *tableFile, StripeMetadata *stripeMetadata,
 
 	/* load column data for projected columns */
 	columnBuffersArray = palloc0(columnCount * sizeof(ColumnBuffers *));
-	currentColumnFileOffset = stripeMetadata->fileOffset + stripeMetadata->skipListLength;
+	currentColumnFileOffset = stripeMetadata->fileOffset + stripeMetadata->skipListLength+ stripeMetadata->bloomListLength;
 
 	for (columnIndex = 0; columnIndex < stripeFooter->columnCount; columnIndex++)
 	{
@@ -631,6 +655,7 @@ LoadStripeFooter(FILE *tableFile, StripeMetadata *stripeMetadata,
 	uint64 footerOffset = 0;
 
 	footerOffset += stripeMetadata->fileOffset;
+	footerOffset +=stripeMetadata->bloomListLength;
 	footerOffset += stripeMetadata->skipListLength;
 	footerOffset += stripeMetadata->dataLength;
 
@@ -645,6 +670,70 @@ LoadStripeFooter(FILE *tableFile, StripeMetadata *stripeMetadata,
 	return stripeFooter;
 }
 
+
+static StripeBloomList * LoadStripeBloomList(FILE *tableFile, StripeMetadata *stripeMetadata,
+				   StripeFooter *stripeFooter, uint32 columnCount,
+				   bool *projectedColumnMask,
+				   TupleDesc tupleDescriptor)
+{
+
+	StripeBloomList *stripeBloomList = NULL;
+	bool **bloomArray = NULL;
+	StringInfo firstColumnBloomListBuffer = NULL;
+	uint64 currentColumnBloomListFileOffset = 0;
+	uint32 columnIndex=0;
+	uint32 stripeSizeCount = 0;
+	uint32 stripeColumnCount = stripeFooter->columnCount;
+
+	firstColumnBloomListBuffer = ReadFromFile(tableFile, stripeMetadata->fileOffset,
+												stripeFooter->bloomListSizeArray[0]);
+	stripeSizeCount = DeserializeSizeCount(firstColumnBloomListBuffer);
+
+
+	bloomArray = palloc0(columnCount*sizeof(bool *));
+	currentColumnBloomListFileOffset = stripeMetadata->fileOffset;
+
+	for (columnIndex = 0; columnIndex < stripeColumnCount; columnIndex++)
+	{
+		uint64 columnBloomListSize = stripeFooter->bloomListSizeArray[columnIndex];
+		bool firstColumn = columnIndex == 0;
+
+		if (projectedColumnMask[columnIndex] || firstColumn)
+		{
+			
+			StringInfo columnBloomListBuffer = ReadFromFile(tableFile, currentColumnBloomListFileOffset,
+							 columnBloomListSize);
+
+			bool *columnBloomList = DeserializeColumnBloomList(columnBloomListBuffer,stripeSizeCount);
+			bloomArray[columnIndex] = columnBloomList;
+		}
+
+		currentColumnBloomListFileOffset+=columnBloomListSize;
+
+	}
+	for (columnIndex = stripeColumnCount; columnIndex < columnCount; columnIndex++)
+	{
+		bool *columnBloomList = NULL;
+		bool firstColumn = columnIndex == 0;
+
+		if (!projectedColumnMask[columnIndex] && !firstColumn)
+		{
+			bloomArray[columnIndex] = NULL;
+			continue;
+		}
+
+		columnBloomList = palloc0(stripeSizeCount * sizeof(bool));
+		bloomArray[columnIndex] = columnBloomList;
+
+	}
+
+	stripeBloomList = palloc0(sizeof(StripeBloomList));
+	stripeBloomList->bloomArray = bloomArray;
+	stripeBloomList->columnCount = columnCount;
+	stripeBloomList->m = stripeSizeCount;
+	
+	return stripeBloomList;
+}
 
 /* Reads the skip list for the given stripe. */
 static StripeSkipList *
@@ -737,13 +826,47 @@ LoadStripeSkipList(FILE *tableFile, StripeMetadata *stripeMetadata,
 }
 
 
+
+/*
+
+
+static BloomFilter * LoadBloomFilter(FILE *tableFile,uint32 columnCount,
+									StripeMetadata *stripeMetadata,
+									bool *projectedColumnMask)
+{
+	BloomFilter *bloomFilter = NULL;
+	bool **bloomArray = NULL;
+	StringInfo firstColumnBloomBuffer = NULL;
+	uint32 columnIndex = 0;
+	uint32 FileOffset = stripeMetadata->fileOffset;
+	
+	bloomArray = palloc0(columnCount * sizeof(bool *));
+
+	for(columnIndex=0;columnIndex<columnCount;columnIndex++)
+	{
+		bool firstColumn = columnIndex == 0;	
+
+		if (projectedColumnMask[columnIndex] || firstColumn)
+		{
+			StringInfo columnSkipListBuffer =ReadFromFile(tableFile, FileOffset,
+							                              columnSkipListSize);	
+		}
+	}
+
+}
+
+
+
+*/
+
+
 /*
  * SelectedBlockMask walks over each column's blocks and checks if a block can
  * be filtered without reading its data. The filtering happens when all rows in
  * the block can be refuted by the given qualifier conditions.
  */
 static bool *
-SelectedBlockMask(StripeSkipList *stripeSkipList, List *projectedColumnList,
+SelectedBlockMask(StripeSkipList *stripeSkipList, StripeBloomList *stripeBloomList ,List *projectedColumnList,
 				  List *whereClauseList)
 {
 	bool *selectedBlockMask = NULL;
@@ -764,6 +887,7 @@ SelectedBlockMask(StripeSkipList *stripeSkipList, List *projectedColumnList,
 		/* if this column's data type doesn't have a comparator, skip it */
 		comparisonFunction = GetFunctionInfoOrNull(column->vartype, BTREE_AM_OID,
 												   BTORDER_PROC);
+		
 		if (comparisonFunction == NULL)
 		{
 			continue;

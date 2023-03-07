@@ -1216,13 +1216,19 @@ cstore_fdw_handler(PG_FUNCTION_ARGS)
 
 	fdwRoutine->GetForeignRelSize = CStoreGetForeignRelSize;
 	fdwRoutine->GetForeignPaths = CStoreGetForeignPaths;
+	
 	fdwRoutine->GetForeignPlan = CStoreGetForeignPlan;
 	fdwRoutine->ExplainForeignScan = CStoreExplainForeignScan;
+
+
 	fdwRoutine->BeginForeignScan = CStoreBeginForeignScan;
 	fdwRoutine->IterateForeignScan = CStoreIterateForeignScan;
 	fdwRoutine->ReScanForeignScan = CStoreReScanForeignScan;
 	fdwRoutine->EndForeignScan = CStoreEndForeignScan;
+
+
 	fdwRoutine->AnalyzeForeignTable = CStoreAnalyzeForeignTable;
+	
 	fdwRoutine->PlanForeignModify = CStorePlanForeignModify;
 	fdwRoutine->BeginForeignModify = CStoreBeginForeignModify;
 	fdwRoutine->ExecForeignInsert = CStoreExecForeignInsert;
@@ -1554,12 +1560,15 @@ ValidateForeignTableOptions(char *filename, char *compressionTypeString,
 static char *
 CStoreDefaultFilePath(Oid foreignTableId)
 {
+	StringInfo cstoreFilePath = makeStringInfo();
 	Relation relation = relation_open(foreignTableId, AccessShareLock);
 	RelFileNode relationFileNode = relation->rd_node;
 	Oid databaseOid = relationFileNode.dbNode;
 	Oid relationFileOid = relationFileNode.relNode;
-
+	
 	relation_close(relation, AccessShareLock);
+	
+
 
 	/* PG12 onward does not create relfilenode for foreign tables */
 	if (databaseOid == InvalidOid)
@@ -1569,7 +1578,7 @@ CStoreDefaultFilePath(Oid foreignTableId)
 
 	}
 
-	StringInfo cstoreFilePath = makeStringInfo();
+	
 	appendStringInfo(cstoreFilePath, "%s/%s/%u/%u", DataDir, CSTORE_FDW_NAME,
 					 databaseOid, relationFileOid);
 

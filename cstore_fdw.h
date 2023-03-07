@@ -127,6 +127,9 @@ typedef struct CStoreFdwOptions
 typedef struct StripeMetadata
 {
 	uint64 fileOffset;
+
+	uint64 bloomListLength;
+
 	uint64 skipListLength;
 	uint64 dataLength;
 	uint64 footerLength;
@@ -179,6 +182,28 @@ typedef struct StripeSkipList
 	uint32 blockCount;
 
 } StripeSkipList;
+
+
+/* Bloom filter definition*/
+
+
+
+
+typedef struct StripeBloomList
+{
+	bool **bloomArray;
+	uint32 columnCount;
+	uint32 m;           // length of filter
+	uint32 n;           // no of elements to be inserted
+	uint32 k;           // no of hash functions
+    double prob;        // false positive probability
+	
+} StripeBloomList;
+
+
+
+
+/* bool **bloomArray=NULL;   */
 
 
 /*
@@ -244,9 +269,14 @@ typedef struct StripeBuffers
 typedef struct StripeFooter
 {
 	uint32 columnCount;
+
+	uint64 *bloomListSizeArray;
+
 	uint64 *skipListSizeArray;
 	uint64 *existsSizeArray;
 	uint64 *valueSizeArray;
+
+	
 
 } StripeFooter;
 
@@ -273,6 +303,8 @@ typedef struct TableReadState
 	ColumnBlockData **blockDataArray;
 	int32 deserializedBlockIndex;
 
+	
+
 } TableReadState;
 
 
@@ -291,6 +323,10 @@ typedef struct TableWriteState
 	MemoryContext stripeWriteContext;
 	StripeBuffers *stripeBuffers;
 	StripeSkipList *stripeSkipList;
+
+
+	StripeBloomList *stripeBloomList;
+
 	uint32 stripeMaxRowCount;
 	ColumnBlockData **blockDataArray;
 	/*
