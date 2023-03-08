@@ -270,8 +270,7 @@ StringInfo SerializeColumnBloomList(bool *bloomArray, uint32 m)
 
 	
 	bloomNodeArray = palloc0(m*sizeof(bool));
-	
-    
+
 	memcpy(bloomNodeArray,bloomArray,m*sizeof(bool));
 
  

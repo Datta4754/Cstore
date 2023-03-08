@@ -40,6 +40,9 @@
 #include "catalog/pg_type.h"
 #include "access/htup_details.h"
 #include "fmgr.h"
+#include "utils/hashutils.h"
+
+#include<access/hash.h>
 
 
 
@@ -57,7 +60,7 @@ static StripeBloomList * CreateEmptyStripeBloomList(uint32 columnCount);
 
 static StringInfo * CreateBloomListBufferArray(StripeBloomList *stripeBloomList,TupleDesc tupleDescriptor);
 
-static uint32 djb2(Datum s,int k);
+//static uint32 djb2(Datum s,int k);
 
 
 static StripeMetadata FlushStripe(TableWriteState *writeState);
@@ -81,40 +84,6 @@ static void AppendStripeMetadata(TableFooter *tableFooter,
 static void WriteToFile(FILE *file, void *data, uint32 dataLength);
 static void SyncAndCloseFile(FILE *file);
 static StringInfo CopyStringInfo(StringInfo sourceString);
-
-
-
-
-
-/*PG_FUNCTION_INFO_V1(datum_to_string);
-
-Datum datum_to_string(PG_FUNCTION_ARGS) {
-    Datum datum_val = PG_GETARG_DATUM(0);
-    char* str_val;
-
-    // get type information for the datum value
-    Oid type_id = get_fn_expr_argtype(fcinfo->flinfo, 0);
-    TypeCacheEntry* type_cache = lookup_type_cache(type_id, 0);
-
-    // convert datum value to string
-    str_val = OidOutputFunctionCall(type_cache->typoutput, datum_val);
-
-    // free any memory allocated by the conversion function
-    pfree(str_val);
-
-    PG_RETURN_CSTRING(str_val);
-}
-*/
-
-
-
-
-
-
-
-
-
-
 
 /*
  * CStoreBeginWrite initializes a cstore data load operation and returns a table
@@ -282,24 +251,26 @@ CStoreWriteRow(TableWriteState *writeState, Datum *columnValues, bool *columnNul
 	StripeBuffers *stripeBuffers = writeState->stripeBuffers;
 	StripeSkipList *stripeSkipList = writeState->stripeSkipList;
 
+	const unsigned char *res;
+	const unsigned char *key;
+	const unsigned char *index;
+	size_t keyLen =0;
+	size_t indexLen = 0;
+	uint32 hash = 0;
+	bytea* bytes;
 
-	StripeBloomList *stripeBloomList = NULL;
+
+	StripeBloomList *stripeBloomList = writeState->stripeBloomList;
+
 	bool **bloomArray = NULL;
 
-
-	//BloomList *bloomList= writeState->bloomList;
-
-	//BloomFilter *bloomFilter = writeState->bloomFilter;
-	//bool **bloomArray = bloomFilter->bloomArray;
-
-	
-	//bool **bloomArray=writeState->bloomArray;
 
 	uint32 columnCount = writeState->tupleDescriptor->natts;
 	TableFooter *tableFooter = writeState->tableFooter;
 	const uint32 blockRowCount = tableFooter->blockRowCount;
 	ColumnBlockData **blockDataArray = writeState->blockDataArray;
 	MemoryContext oldContext = MemoryContextSwitchTo(writeState->stripeWriteContext);
+
 
 	if (stripeBuffers == NULL)
 	{
@@ -331,7 +302,6 @@ CStoreWriteRow(TableWriteState *writeState, Datum *columnValues, bool *columnNul
 	blockIndex = stripeBuffers->rowCount / blockRowCount;
 	blockRowIndex = stripeBuffers->rowCount % blockRowCount;
 
-	stripeBloomList = writeState->stripeBloomList;
 
 	k=stripeBloomList->k;
 	m=stripeBloomList->m;
@@ -370,12 +340,29 @@ CStoreWriteRow(TableWriteState *writeState, Datum *columnValues, bool *columnNul
 									  columnTypeByValue, columnTypeLength,
 									  columnCollation, comparisonFunction);
 			
+			
+			//key = (const unsigned char *) DatumGetPointer(columnValues[columnIndex]);
+			
+			bytes = DatumGetByteaP(columnValues[columnIndex]);
+  			key = (const unsigned char*)VARDATA(bytes);
+			keyLen = strlen((const char*)key);
 
-		
+	
 			for(int i=0;i<k;i++)
 		   {
-            bloomArray[columnIndex][(djb2(columnValues[columnIndex],i))%m]=true;
-			
+
+				unsigned char buf[32];
+  				sprintf((char*)buf, "%d", i);
+  				index = (const unsigned char*)buf;
+				indexLen = strlen((const char*)index);
+
+				res = malloc(keyLen + indexLen + 1);
+				strcpy((char*)res, (const char*)key);
+				strcat((char*)res, (const char*)index);
+
+				hash = DatumGetUInt32(hash_any(res, sizeof(res)));
+
+            	bloomArray[columnIndex][hash%m]=true;
            }   
 
 		}
@@ -652,6 +639,8 @@ static bool ** CreateEmptyBloomArray(uint32 columnCount)
 */
 
 
+/*
+
 static uint32 djb2(Datum s,int k) 
 {
 
@@ -669,14 +658,14 @@ static uint32 djb2(Datum s,int k)
 
 		for(int i=0;str[i]!='\0';i++)
 		{
-			hash = ((hash << 5) + hash) + str[i];  /* hash * 33 + c} */
+			hash = ((hash << 5) + hash) + str[i]; 
 		}
 		
 		hash = ((hash << 5) + hash) + k;
 		
         return hash;
 
-        /*unsigned char str[sizeof(s)];
+        unsigned char str[sizeof(s)];
         memcpy(str, &s, sizeof(s));
 
 		char ch = (char)k;
@@ -686,8 +675,10 @@ static uint32 djb2(Datum s,int k)
         for(int i=0;i<strlen(str);i++)
             hash = ((hash << 5) + hash) + str[i];        
 
-        return hash%1000;*/
+        return hash%1000;
 }
+
+*/
 
 
 /*
@@ -944,7 +935,7 @@ CreateStripeFooter(StripeSkipList *stripeSkipList, StringInfo *skipListBufferArr
 	uint32 columnIndex = 0;
 	uint32 columnCount = stripeSkipList->columnCount;
 
-	uint64 *bloomListSizeArray = palloc(columnCount*sizeof(uint64));
+	uint64 *bloomListSizeArray = palloc0(columnCount*sizeof(uint64));
 
 	uint64 *skipListSizeArray = palloc0(columnCount * sizeof(uint64));
 	uint64 *existsSizeArray = palloc0(columnCount * sizeof(uint64));

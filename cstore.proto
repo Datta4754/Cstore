@@ -29,7 +29,7 @@ message ColumnBlockSkipNode {
 
 message ColumnBlockSkipList {
   repeated ColumnBlockSkipNode blockSkipNodeArray = 1;
-  repeated BloomList bloom =2;
+  //repeated BloomList bloom =2;
 }
 
 message StripeFooter {

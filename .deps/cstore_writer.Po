@@ -119,7 +119,9 @@ cstore_writer.o: cstore_writer.c \
   /home/rohini-pt7149/my_postgres11/pg11d/include/server/catalog/pg_type.h \
   /home/rohini-pt7149/my_postgres11/pg11d/include/server/catalog/pg_type_d.h \
   /home/rohini-pt7149/my_postgres11/pg11d/include/server/access/htup_details.h \
-  /home/rohini-pt7149/my_postgres11/pg11d/include/server/access/transam.h
+  /home/rohini-pt7149/my_postgres11/pg11d/include/server/access/transam.h \
+  /home/rohini-pt7149/my_postgres11/pg11d/include/server/utils/hashutils.h \
+  /home/rohini-pt7149/my_postgres11/pg11d/include/server/access/hash.h
 
 /home/rohini-pt7149/my_postgres11/pg11d/include/server/postgres.h:
 
@@ -364,3 +366,7 @@ cstore_version_compat.h:
 /home/rohini-pt7149/my_postgres11/pg11d/include/server/access/htup_details.h:
 
 /home/rohini-pt7149/my_postgres11/pg11d/include/server/access/transam.h:
+
+/home/rohini-pt7149/my_postgres11/pg11d/include/server/utils/hashutils.h:
+
+/home/rohini-pt7149/my_postgres11/pg11d/include/server/access/hash.h:

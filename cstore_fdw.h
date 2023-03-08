@@ -170,10 +170,25 @@ typedef struct ColumnBlockSkipNode
 } ColumnBlockSkipNode;
 
 
+/*ColumnBlockBloomList
+
+typedef struct ColumnBlockBloomNode
+{
+	bool *bloomArray;
+	uint64 rowCount;
+
+}ColumnBlockBloomNode;
+
+*/
+
+
+
+
 /*
  * StripeSkipList can be used for skipping row blocks. It contains a column block
  * skip node for each block of each column. blockSkipNodeArray[column][block]
  * is the entry for the specified column block.
+ * 
  */
 typedef struct StripeSkipList
 {
@@ -187,11 +202,11 @@ typedef struct StripeSkipList
 /* Bloom filter definition*/
 
 
-
-
 typedef struct StripeBloomList
 {
 	bool **bloomArray;
+
+	//ColumnBlockBloomNode **blockBloomNodeArray;
 	uint32 columnCount;
 	uint32 m;           // length of filter
 	uint32 n;           // no of elements to be inserted

@@ -498,16 +498,16 @@ LoadFilteredStripeBuffers(FILE *tableFile, StripeMetadata *stripeMetadata,
 
 
 
-	StripeBloomList *stripeBloomList = LoadStripeBloomList(tableFile, stripeMetadata,
-															stripeFooter, columnCount,
-															projectedColumnMask,tupleDescriptor);
-
-
-
+	
 	StripeSkipList *stripeSkipList = LoadStripeSkipList(tableFile, stripeMetadata,
 														stripeFooter, columnCount,
 														projectedColumnMask,
 														tupleDescriptor);
+
+	StripeBloomList *stripeBloomList = LoadStripeBloomList(tableFile, stripeMetadata,
+															stripeFooter, columnCount,
+															projectedColumnMask,tupleDescriptor);
+
 	
 	
 
