@@ -12,7 +12,6 @@ enum CompressionType {
 message BloomList {
 
     repeated bool bloomNodeArray=1;
-  
 }
 
 
@@ -33,19 +32,30 @@ message ColumnBlockSkipList {
 }
 
 message StripeFooter {
-  repeated uint64 bloomListSizeArray = 1;
-  repeated uint64 skipListSizeArray = 2;
+
+  
+  
+  repeated uint64 skipListSizeArray = 1;
+  repeated uint64 bloomListSizeArray = 2;
+  
   repeated uint64 existsSizeArray = 3;
   repeated uint64 valueSizeArray = 4;
+
+  optional uint64 filterLength = 5;          
+	optional uint64 no_of_elements = 6;           
+	optional uint64 no_of_hashFunctions = 7;          
+  optional double falsePositiveProb = 8; 
 }
 
 message StripeMetadata {
   optional uint64 fileOffset = 1;
   optional uint64 skipListLength = 2;
-  optional uint64 dataLength = 3;
-  optional uint64 footerLength = 4;
 
-  optional uint64 bloomListLength = 5;
+  optional uint64 bloomListLength = 3;
+  optional uint64 dataLength = 4;
+  optional uint64 footerLength = 5;
+
+  
 }
 
 message TableFooter {

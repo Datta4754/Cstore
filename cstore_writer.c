@@ -58,7 +58,7 @@ static StripeSkipList * CreateEmptyStripeSkipList(uint32 stripeMaxRowCount,
 
 static StripeBloomList * CreateEmptyStripeBloomList(uint32 columnCount);
 
-static StringInfo * CreateBloomListBufferArray(StripeBloomList *stripeBloomList,TupleDesc tupleDescriptor);
+static StringInfo * CreateBloomListBufferArray(StripeBloomList *stripeBloomList,uint32 rowCount);
 
 //static uint32 djb2(Datum s,int k);
 
@@ -154,9 +154,11 @@ CStoreBeginWrite(const char *filename, CompressionType compressionType,
 
 		lastStripe = llast(tableFooter->stripeMetadataList);
 
+		
+		lastStripeSize += lastStripe->skipListLength;
+
 		lastStripeSize+=lastStripe->bloomListLength;
 
-		lastStripeSize += lastStripe->skipListLength;
 		lastStripeSize += lastStripe->dataLength;
 		lastStripeSize += lastStripe->footerLength;
 
@@ -246,18 +248,15 @@ CStoreWriteRow(TableWriteState *writeState, Datum *columnValues, bool *columnNul
 	uint32 columnIndex = 0;
 	uint32 blockIndex = 0;
 	uint32 blockRowIndex = 0;
-	uint32 k=0;
-	uint32 m=0;
 	StripeBuffers *stripeBuffers = writeState->stripeBuffers;
 	StripeSkipList *stripeSkipList = writeState->stripeSkipList;
 
-	const unsigned char *res;
 	const unsigned char *key;
-	const unsigned char *index;
+
+	uint64 no_of_hashFunctions=0;
+	uint64 filterLength=0;
 	size_t keyLen =0;
-	size_t indexLen = 0;
-	uint32 hash = 0;
-	bytea* bytes;
+	uint64 hash = 0;
 
 
 	StripeBloomList *stripeBloomList = writeState->stripeBloomList;
@@ -303,8 +302,8 @@ CStoreWriteRow(TableWriteState *writeState, Datum *columnValues, bool *columnNul
 	blockRowIndex = stripeBuffers->rowCount % blockRowCount;
 
 
-	k=stripeBloomList->k;
-	m=stripeBloomList->m;
+	no_of_hashFunctions = stripeBloomList->no_of_hashFunctions;
+	filterLength = stripeBloomList->filterLength;
 
 	bloomArray = stripeBloomList->bloomArray;
 
@@ -340,17 +339,7 @@ CStoreWriteRow(TableWriteState *writeState, Datum *columnValues, bool *columnNul
 									  columnTypeByValue, columnTypeLength,
 									  columnCollation, comparisonFunction);
 			
-			
-			//key = (const unsigned char *) DatumGetPointer(columnValues[columnIndex]);
-			
-			bytes = DatumGetByteaP(columnValues[columnIndex]);
-  			key = (const unsigned char*)VARDATA(bytes);
-			keyLen = strlen((const char*)key);
-
-	
-			for(int i=0;i<k;i++)
-		   {
-
+			/*
 				unsigned char buf[32];
   				sprintf((char*)buf, "%d", i);
   				index = (const unsigned char*)buf;
@@ -361,10 +350,18 @@ CStoreWriteRow(TableWriteState *writeState, Datum *columnValues, bool *columnNul
 				strcat((char*)res, (const char*)index);
 
 				hash = DatumGetUInt32(hash_any(res, sizeof(res)));
+			*/
 
-            	bloomArray[columnIndex][hash%m]=true;
-           }   
-
+			key = (const unsigned char *) DatumGetPointer(columnValues[columnIndex]);
+			keyLen = strlen((const char*)key);
+	
+			
+			for(uint64 i=0;i<no_of_hashFunctions;i++)
+			{
+				hash=hash_any_extended(key,keyLen,i);
+				bloomArray[columnIndex][hash % filterLength]=true;
+			}
+		  
 		}
 
 		blockSkipNode->rowCount++;
@@ -590,31 +587,29 @@ static StripeBloomList * CreateEmptyStripeBloomList(uint32 columnCount)
 	
 	StripeBloomList *stripeBloomList = NULL;
 	uint32 columnIndex = 0;
-	uint32 n = DEFAULT_STRIPE_ROW_COUNT;
-	double prob = 0.01;
-	uint32 k = -(log(prob)/log(2));
-	uint32 m = (k*n)/log(2);
+	uint64 no_of_elements = DEFAULT_STRIPE_ROW_COUNT;
+	double falsePositiveProb = 0.01;
+	uint64 no_of_hashFunctions= -(log(falsePositiveProb)/log(2));
+	uint64 filterLength = (no_of_hashFunctions * no_of_elements)/log(2);
 	
 
 	bool **bloomArray= palloc0(columnCount*sizeof(bool*));
 
 	for (columnIndex = 0; columnIndex < columnCount; columnIndex++)
 	{
-			bloomArray[columnIndex] = palloc0(m*sizeof(bool));
+		bloomArray[columnIndex] = palloc0(filterLength * sizeof(bool));
+		memset(bloomArray[columnIndex], false, filterLength * sizeof(bool));
 	}
-
 
 	stripeBloomList = palloc0(sizeof(StripeBloomList));
 	stripeBloomList->bloomArray = bloomArray;
-	stripeBloomList->n = n;
-	stripeBloomList->k = k;
-	stripeBloomList->m = m;
-	stripeBloomList->prob = prob;
+	stripeBloomList->no_of_elements = no_of_elements;
+	stripeBloomList->no_of_hashFunctions = no_of_hashFunctions;
+	stripeBloomList->filterLength = filterLength;
+	stripeBloomList->falsePositiveProb = falsePositiveProb;
 	stripeBloomList->columnCount = columnCount;
-
-
+	
 	return stripeBloomList;
-
 }
 
 
@@ -711,6 +706,8 @@ FlushStripe(TableWriteState *writeState)
 
 	StripeBloomList *stripeBloomList = writeState->stripeBloomList;
 
+	uint32 rowCount = writeState->stripeBuffers->rowCount;
+
 
 	//bool **bloomArray = writeState->bloomArray;
 
@@ -767,7 +764,7 @@ FlushStripe(TableWriteState *writeState)
 	/* create skip list and footer buffers */
 	skipListBufferArray = CreateSkipListBufferArray(stripeSkipList, tupleDescriptor);
 
-	bloomListBufferArray = CreateBloomListBufferArray(stripeBloomList, tupleDescriptor);
+	bloomListBufferArray = CreateBloomListBufferArray(stripeBloomList, rowCount);
 	stripeFooter = CreateStripeFooter(stripeSkipList,skipListBufferArray,stripeBloomList,bloomListBufferArray);
 	stripeFooterBuffer = SerializeStripeFooter(stripeFooter);
 
@@ -795,24 +792,25 @@ FlushStripe(TableWriteState *writeState)
 	 *
 	 * We start by flushing the skip list buffers.
 	 */
+
+
+
+
 	for (columnIndex = 0; columnIndex < columnCount; columnIndex++)
 	{
 		StringInfo skipListBuffer = skipListBufferArray[columnIndex];
 		WriteToFile(tableFile, skipListBuffer->data, skipListBuffer->len);
 	}
 
-
+	
 	/* flushing the bloom buffer*/
-
-	
-	
 	for(columnIndex= 0;columnIndex<columnCount;columnIndex++)
 	{
 		StringInfo bloomListBuffer = bloomListBufferArray[columnIndex];
 		WriteToFile(tableFile,bloomListBuffer->data,bloomListBuffer->len);
 	}
 
-	
+
 
 	/* then, we flush the data buffers */
 	for (columnIndex = 0; columnIndex < columnCount; columnIndex++)
@@ -845,21 +843,24 @@ FlushStripe(TableWriteState *writeState)
 	/* set stripe metadata */
 	for (columnIndex = 0; columnIndex < columnCount; columnIndex++)
 	{
-		bloomListLength+= stripeFooter->bloomListSizeArray[columnIndex];
+		
 		skipListLength += stripeFooter->skipListSizeArray[columnIndex];
+		bloomListLength+= stripeFooter->bloomListSizeArray[columnIndex];
 		dataLength += stripeFooter->existsSizeArray[columnIndex];
 		dataLength += stripeFooter->valueSizeArray[columnIndex];
 	}
 
 	stripeMetadata.fileOffset = writeState->currentFileOffset;
-	stripeMetadata.bloomListLength = bloomListLength;
+	
 	stripeMetadata.skipListLength = skipListLength;
+	stripeMetadata.bloomListLength = bloomListLength;
 	stripeMetadata.dataLength = dataLength;
 	stripeMetadata.footerLength = stripeFooterBuffer->len;
 
 	/* advance current file offset */
-	writeState->currentFileOffset += bloomListLength;
+	
 	writeState->currentFileOffset += skipListLength;
+	writeState->currentFileOffset += bloomListLength;
 	writeState->currentFileOffset += dataLength;
 	writeState->currentFileOffset += stripeFooterBuffer->len;
 
@@ -900,12 +901,12 @@ CreateSkipListBufferArray(StripeSkipList *stripeSkipList, TupleDesc tupleDescrip
 
 
 
-static StringInfo * CreateBloomListBufferArray(StripeBloomList *stripeBloomList,TupleDesc tupleDescriptor)
+static StringInfo * CreateBloomListBufferArray(StripeBloomList *stripeBloomList,uint32 rowCount)
 {
 	StringInfo *bloomListBufferArray = NULL;
 	uint32 columnIndex = 0;
 	uint32 columnCount = stripeBloomList->columnCount;
-	uint32 m = stripeBloomList->m;
+	uint32 filterLength = stripeBloomList->filterLength;
 
 
 	bloomListBufferArray = palloc0(columnCount*sizeof(StringInfo));
@@ -916,7 +917,7 @@ static StringInfo * CreateBloomListBufferArray(StripeBloomList *stripeBloomList,
 
 		//Form_pg_attribute attributeForm = TupleDescAttr(tupleDescriptor, columnIndex);
 
-		bloomListBuffer = SerializeColumnBloomList(bloomArray,m);
+		bloomListBuffer = SerializeColumnBloomList(bloomArray,filterLength);
 
 		bloomListBufferArray[columnIndex] = bloomListBuffer;
 	}
@@ -961,6 +962,12 @@ CreateStripeFooter(StripeSkipList *stripeSkipList, StringInfo *skipListBufferArr
 
 	stripeFooter = palloc0(sizeof(StripeFooter));
 	stripeFooter->columnCount = columnCount;
+
+	stripeFooter->no_of_elements = stripeBloomList->no_of_elements;
+	stripeFooter->filterLength = stripeBloomList->filterLength;
+	stripeFooter->falsePositiveProb = stripeBloomList->falsePositiveProb;
+	stripeFooter->no_of_hashFunctions = stripeBloomList->no_of_hashFunctions;
+
 	stripeFooter->skipListSizeArray = skipListSizeArray;
 	stripeFooter->bloomListSizeArray = bloomListSizeArray;
 	stripeFooter->existsSizeArray = existsSizeArray;

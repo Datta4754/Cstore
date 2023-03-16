@@ -202,17 +202,22 @@ typedef struct StripeSkipList
 /* Bloom filter definition*/
 
 
+typedef struct BloomParameters
+{
+	    
+
+} BloomParameters; 
+
+
 typedef struct StripeBloomList
 {
 	bool **bloomArray;
-
-	//ColumnBlockBloomNode **blockBloomNodeArray;
 	uint32 columnCount;
-	uint32 m;           // length of filter
-	uint32 n;           // no of elements to be inserted
-	uint32 k;           // no of hash functions
-    double prob;        // false positive probability
-	
+	uint64 filterLength;          
+	uint64 no_of_elements;           
+	uint64 no_of_hashFunctions;          
+    double falsePositiveProb;
+
 } StripeBloomList;
 
 
@@ -284,6 +289,11 @@ typedef struct StripeBuffers
 typedef struct StripeFooter
 {
 	uint32 columnCount;
+	uint64 filterLength;          
+	uint64 no_of_elements;           
+	uint64 no_of_hashFunctions;          
+    double falsePositiveProb;
+
 
 	uint64 *bloomListSizeArray;
 
@@ -291,7 +301,6 @@ typedef struct StripeFooter
 	uint64 *existsSizeArray;
 	uint64 *valueSizeArray;
 
-	
 
 } StripeFooter;
 

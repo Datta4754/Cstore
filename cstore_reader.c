@@ -39,6 +39,9 @@
 #include "utils/lsyscache.h"
 #include "utils/rel.h"
 
+#include<access/hash.h>
+#include "access/tupmacs.h"
+
 
 /* static function declarations */
 static StripeBuffers * LoadFilteredStripeBuffers(FILE *tableFile,
@@ -123,6 +126,8 @@ CStoreBeginRead(const char *filename, TupleDesc tupleDescriptor,
 
 	StringInfo tableFooterFilename = makeStringInfo();
 	appendStringInfo(tableFooterFilename, "%s%s", filename, CSTORE_FOOTER_FILE_SUFFIX);
+	
+	elog_node_display(INFO," where clause",whereClauseList, true);
 
 	tableFooter = CStoreReadFooter(tableFooterFilename);
 
@@ -461,8 +466,9 @@ StripeRowCount(FILE *tableFile, StripeMetadata *stripeMetadata)
 	uint64 footerOffset = 0;
 
 	footerOffset += stripeMetadata->fileOffset;
-	footerOffset += stripeMetadata->bloomListLength;
+
 	footerOffset += stripeMetadata->skipListLength;
+	footerOffset += stripeMetadata->bloomListLength;
 	footerOffset += stripeMetadata->dataLength;
 
 	footerBuffer = ReadFromFile(tableFile, footerOffset, stripeMetadata->footerLength);
@@ -498,19 +504,19 @@ LoadFilteredStripeBuffers(FILE *tableFile, StripeMetadata *stripeMetadata,
 
 
 
-	
+
 	StripeSkipList *stripeSkipList = LoadStripeSkipList(tableFile, stripeMetadata,
 														stripeFooter, columnCount,
 														projectedColumnMask,
 														tupleDescriptor);
 
+
 	StripeBloomList *stripeBloomList = LoadStripeBloomList(tableFile, stripeMetadata,
 															stripeFooter, columnCount,
 															projectedColumnMask,tupleDescriptor);
-
 	
 	
-
+	
 
 	bool *selectedBlockMask = SelectedBlockMask(stripeSkipList, stripeBloomList, projectedColumnList,
 												whereClauseList);
@@ -655,8 +661,9 @@ LoadStripeFooter(FILE *tableFile, StripeMetadata *stripeMetadata,
 	uint64 footerOffset = 0;
 
 	footerOffset += stripeMetadata->fileOffset;
-	footerOffset +=stripeMetadata->bloomListLength;
 	footerOffset += stripeMetadata->skipListLength;
+	footerOffset +=stripeMetadata->bloomListLength;
+	
 	footerOffset += stripeMetadata->dataLength;
 
 	footerBuffer = ReadFromFile(tableFile, footerOffset, stripeMetadata->footerLength);
@@ -685,13 +692,16 @@ static StripeBloomList * LoadStripeBloomList(FILE *tableFile, StripeMetadata *st
 	uint32 stripeSizeCount = 0;
 	uint32 stripeColumnCount = stripeFooter->columnCount;
 
-	firstColumnBloomListBuffer = ReadFromFile(tableFile, stripeMetadata->fileOffset,
-												stripeFooter->bloomListSizeArray[0]);
-	stripeSizeCount = DeserializeSizeCount(firstColumnBloomListBuffer);
+	uint64 new_fileOffset = stripeMetadata->fileOffset+stripeMetadata->skipListLength;
 
+	firstColumnBloomListBuffer = ReadFromFile(tableFile, new_fileOffset,
+												stripeFooter->bloomListSizeArray[0]);
+	
+	stripeSizeCount = DeserializeSizeCount(firstColumnBloomListBuffer);
+	
 
 	bloomArray = palloc0(columnCount*sizeof(bool *));
-	currentColumnBloomListFileOffset = stripeMetadata->fileOffset;
+	currentColumnBloomListFileOffset = stripeMetadata->fileOffset+stripeMetadata->skipListLength;
 
 	for (columnIndex = 0; columnIndex < stripeColumnCount; columnIndex++)
 	{
@@ -730,7 +740,11 @@ static StripeBloomList * LoadStripeBloomList(FILE *tableFile, StripeMetadata *st
 	stripeBloomList = palloc0(sizeof(StripeBloomList));
 	stripeBloomList->bloomArray = bloomArray;
 	stripeBloomList->columnCount = columnCount;
-	stripeBloomList->m = stripeSizeCount;
+
+	stripeBloomList->filterLength = stripeFooter->filterLength;
+	stripeBloomList->no_of_elements = stripeFooter->no_of_elements;
+	stripeBloomList->no_of_hashFunctions = stripeFooter->no_of_hashFunctions;
+	stripeBloomList->falsePositiveProb = stripeFooter->falsePositiveProb;
 	
 	return stripeBloomList;
 }
@@ -753,6 +767,8 @@ LoadStripeSkipList(FILE *tableFile, StripeMetadata *stripeMetadata,
 	/* deserialize block count */
 	firstColumnSkipListBuffer = ReadFromFile(tableFile, stripeMetadata->fileOffset,
 											 stripeFooter->skipListSizeArray[0]);
+
+
 	stripeBlockCount = DeserializeBlockCount(firstColumnSkipListBuffer);
 
 	/* deserialize column skip lists */
@@ -877,12 +893,66 @@ SelectedBlockMask(StripeSkipList *stripeSkipList, StripeBloomList *stripeBloomLi
 	selectedBlockMask = palloc0(stripeSkipList->blockCount * sizeof(bool));
 	memset(selectedBlockMask, true, stripeSkipList->blockCount * sizeof(bool));
 
+	
+	//ListCell *each_clause = NULL;
+	const unsigned char *key;
+	int keyLen =0;
+	uint64 hash = 0;
+
+	elog_node_display(INFO,"projected Column",projectedColumnList, true);
+
+
 	foreach(columnCell, projectedColumnList)
 	{
 		Var *column = lfirst(columnCell);
 		uint32 columnIndex = column->varattno - 1;
 		FmgrInfo *comparisonFunction = NULL;
 		Node *baseConstraint = NULL;
+
+		/* Skipping unwanted blocks 
+		 * using Bloom Filter
+		 */
+		//ListCell *columnCell = columnCell;
+
+
+		ListCell *each_clause = list_head(whereClauseList);
+
+		OpExpr *operator = lfirst(each_clause);
+
+		if(operator->opfuncid==1048)
+		{
+
+			Var *variable = lfirst(each_clause);
+			Const *constant = lfirst(each_clause);
+			uint32 Index = variable->varattno-1;
+
+			char* bytes = VARDATA(DatumGetByteaP(constant->constvalue));
+			keyLen = VARSIZE(DatumGetByteaP(constant->constvalue)) - VARHDRSZ;
+			key = (const unsigned char*) bytes;
+
+			uint32 no_of_hashFunctions = stripeBloomList->no_of_hashFunctions;
+			uint32 filterLength = stripeBloomList->filterLength;
+			bool **bloomArray = stripeBloomList->bloomArray;
+			bool false_found = false;
+
+			for(uint64 i=0;i<no_of_hashFunctions;i++)
+			{
+				hash = hash_any_extended(key,keyLen,i);
+
+				if(!bloomArray[Index][hash % filterLength])
+				{
+					false_found = true;
+					break;
+				}
+			}
+			if(false_found)
+			{
+				memset(selectedBlockMask, false, stripeSkipList->blockCount * sizeof(bool));
+				break;
+			}
+
+		}
+		
 
 		/* if this column's data type doesn't have a comparator, skip it */
 		comparisonFunction = GetFunctionInfoOrNull(column->vartype, BTREE_AM_OID,
@@ -892,6 +962,7 @@ SelectedBlockMask(StripeSkipList *stripeSkipList, StripeBloomList *stripeBloomLi
 		{
 			continue;
 		}
+
 
 		baseConstraint = BuildBaseConstraint(column);
 		for (blockIndex = 0; blockIndex < stripeSkipList->blockCount; blockIndex++)

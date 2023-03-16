@@ -89,11 +89,12 @@ SerializeTableFooter(TableFooter *tableFooter)
 		protobufStripeMetadata->has_fileoffset = true;
 		protobufStripeMetadata->fileoffset = stripeMetadata->fileOffset;
 
+		protobufStripeMetadata->has_skiplistlength = true;
+		protobufStripeMetadata->skiplistlength = stripeMetadata->skipListLength;
+
 		protobufStripeMetadata->has_bloomlistlength = true;
 		protobufStripeMetadata->bloomlistlength = stripeMetadata->bloomListLength;
 
-		protobufStripeMetadata->has_skiplistlength = true;
-		protobufStripeMetadata->skiplistlength = stripeMetadata->skipListLength;
 		protobufStripeMetadata->has_datalength = true;
 		protobufStripeMetadata->datalength = stripeMetadata->dataLength;
 		protobufStripeMetadata->has_footerlength = true;
@@ -142,6 +143,13 @@ SerializeStripeFooter(StripeFooter *stripeFooter)
 	protobufStripeFooter.existssizearray = (uint64_t *) stripeFooter->existsSizeArray;
 	protobufStripeFooter.n_valuesizearray = stripeFooter->columnCount;
 	protobufStripeFooter.valuesizearray = (uint64_t *) stripeFooter->valueSizeArray;
+
+	protobufStripeFooter.no_of_elements = stripeFooter->no_of_elements;
+	protobufStripeFooter.filterlength = stripeFooter->filterLength;
+	protobufStripeFooter.no_of_hashfunctions = stripeFooter->no_of_hashFunctions;
+	protobufStripeFooter.falsepositiveprob = stripeFooter->falsePositiveProb;
+
+	
 
 	stripeFooterSize = protobuf__stripe_footer__get_packed_size(&protobufStripeFooter);
 	stripeFooterData = palloc0(stripeFooterSize);
@@ -257,7 +265,7 @@ SerializeColumnSkipList(ColumnBlockSkipNode *blockSkipNodeArray, uint32 blockCou
 
 
 
-StringInfo SerializeColumnBloomList(bool *bloomArray, uint32 m)
+StringInfo SerializeColumnBloomList(bool *bloomArray, uint32 filterLength)
 {
 	StringInfo bloomListBuffer = NULL;
 	uint8 *bloomListData = NULL;
@@ -269,12 +277,12 @@ StringInfo SerializeColumnBloomList(bool *bloomArray, uint32 m)
 	protobuf_c_boolean *bloomNodeArray = NULL;
 
 	
-	bloomNodeArray = palloc0(m*sizeof(bool));
+	bloomNodeArray = palloc0(filterLength * sizeof(bool));
 
-	memcpy(bloomNodeArray,bloomArray,m*sizeof(bool));
+	memcpy(bloomNodeArray,bloomArray,filterLength * sizeof(bool));
 
  
-	protobufBloomList.n_bloomnodearray = m;
+	protobufBloomList.n_bloomnodearray = filterLength;
 	protobufBloomList.bloomnodearray = bloomNodeArray;
 	
 	bloomListSize = protobuf__bloom_list__get_packed_size(&protobufBloomList);
@@ -384,8 +392,9 @@ DeserializeTableFooter(StringInfo buffer)
 
 		stripeMetadata = palloc0(sizeof(StripeMetadata));
 		stripeMetadata->fileOffset = protobufStripeMetadata->fileoffset;
-		stripeMetadata->bloomListLength = protobufStripeMetadata->bloomlistlength;
+		
 		stripeMetadata->skipListLength = protobufStripeMetadata->skiplistlength;
+		stripeMetadata->bloomListLength = protobufStripeMetadata->bloomlistlength;
 		stripeMetadata->dataLength = protobufStripeMetadata->datalength;
 		stripeMetadata->footerLength = protobufStripeMetadata->footerlength;
 
@@ -418,6 +427,11 @@ DeserializeStripeFooter(StringInfo buffer)
 	uint64 sizeArrayLength = 0;
 	uint32 columnCount = 0;
 
+	uint64 filterLength = 0;          
+	uint64 no_of_elements = 0;           
+	uint64 no_of_hashFunctions = 0;          
+    double falsePositiveProb = 0;
+
 	protobufStripeFooter = protobuf__stripe_footer__unpack(NULL, buffer->len,
 														   (uint8 *) buffer->data);
 	if (protobufStripeFooter == NULL)
@@ -427,6 +441,12 @@ DeserializeStripeFooter(StringInfo buffer)
 	}
 
 	columnCount = protobufStripeFooter->n_skiplistsizearray;
+
+	filterLength = protobufStripeFooter->filterlength;
+	no_of_elements = protobufStripeFooter->no_of_elements;
+	no_of_hashFunctions = protobufStripeFooter->no_of_hashfunctions;
+	falsePositiveProb = protobufStripeFooter->falsepositiveprob;
+
 	if (protobufStripeFooter->n_existssizearray != columnCount ||
 		protobufStripeFooter->n_valuesizearray != columnCount)
 	{
@@ -454,6 +474,11 @@ DeserializeStripeFooter(StringInfo buffer)
 	stripeFooter->existsSizeArray = existsSizeArray;
 	stripeFooter->valueSizeArray = valueSizeArray;
 	stripeFooter->columnCount = columnCount;
+
+	stripeFooter->filterLength = filterLength;
+	stripeFooter->no_of_elements = no_of_elements;
+	stripeFooter->no_of_hashFunctions = no_of_hashFunctions;
+	stripeFooter->falsePositiveProb = falsePositiveProb;
 
 	return stripeFooter;
 }
@@ -558,7 +583,7 @@ bool * DeserializeColumnBloomList(StringInfo buffer,uint32 sizeCount)
 	}
 	bloomArray = palloc0(sizeCount*sizeof(bool));
 
-	memcpy(bloomArray,protobufBloomList,sizeCount*sizeof(bool));
+	memcpy(bloomArray,protobufBloomList->bloomnodearray,sizeCount*sizeof(bool));
 
 	protobuf__bloom_list__free_unpacked(protobufBloomList,NULL);
 

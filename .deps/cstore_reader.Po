@@ -113,7 +113,8 @@ cstore_reader.o: cstore_reader.c \
   /home/rohini-pt7149/my_postgres11/pg11d/include/server/optimizer/restrictinfo.h \
   /home/rohini-pt7149/my_postgres11/pg11d/include/server/utils/memutils.h \
   /home/rohini-pt7149/my_postgres11/pg11d/include/server/nodes/memnodes.h \
-  /home/rohini-pt7149/my_postgres11/pg11d/include/server/utils/lsyscache.h
+  /home/rohini-pt7149/my_postgres11/pg11d/include/server/utils/lsyscache.h \
+  /home/rohini-pt7149/my_postgres11/pg11d/include/server/access/hash.h
 
 /home/rohini-pt7149/my_postgres11/pg11d/include/server/postgres.h:
 
@@ -346,3 +347,5 @@ cstore_version_compat.h:
 /home/rohini-pt7149/my_postgres11/pg11d/include/server/nodes/memnodes.h:
 
 /home/rohini-pt7149/my_postgres11/pg11d/include/server/utils/lsyscache.h:
+
+/home/rohini-pt7149/my_postgres11/pg11d/include/server/access/hash.h:
