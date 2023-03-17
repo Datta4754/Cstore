@@ -43,7 +43,7 @@
 #include "utils/hashutils.h"
 
 #include<access/hash.h>
-
+#include<string.h>
 
 
 static void CStoreWriteFooter(StringInfo footerFileName, TableFooter *tableFooter);
@@ -251,11 +251,11 @@ CStoreWriteRow(TableWriteState *writeState, Datum *columnValues, bool *columnNul
 	StripeBuffers *stripeBuffers = writeState->stripeBuffers;
 	StripeSkipList *stripeSkipList = writeState->stripeSkipList;
 
-	const unsigned char *key;
+	const unsigned char *key = NULL;
 
 	uint64 no_of_hashFunctions=0;
 	uint64 filterLength=0;
-	size_t keyLen =0;
+	int keyLen =0;
 	uint64 hash = 0;
 
 
@@ -352,16 +352,29 @@ CStoreWriteRow(TableWriteState *writeState, Datum *columnValues, bool *columnNul
 				hash = DatumGetUInt32(hash_any(res, sizeof(res)));
 			*/
 
-			key = (const unsigned char *) DatumGetPointer(columnValues[columnIndex]);
-			keyLen = strlen((const char*)key);
+			//key = (const unsigned char *) VARDATA(DatumGetByteaP(columnValues[columnIndex]));
+			//keyLen = VARSIZE_ANY_EXHDR(columnValues[columnIndex]) - VARHDRSZ;
+		
+
+			bytea *byteaValue = DatumGetByteaP(columnValues[columnIndex]);
+
+			keyLen = VARSIZE(byteaValue) - VARHDRSZ;
+
+			char *stringValue = (char *) palloc(keyLen + 1);
+
+			memcpy(stringValue, VARDATA(byteaValue), keyLen);
+
+			stringValue[keyLen] = '\0';
+
+			key = (const unsigned char *) stringValue;
 	
-			
 			for(uint64 i=0;i<no_of_hashFunctions;i++)
 			{
 				hash=hash_any_extended(key,keyLen,i);
 				bloomArray[columnIndex][hash % filterLength]=true;
 			}
-		  
+
+			pfree(stringValue);
 		}
 
 		blockSkipNode->rowCount++;

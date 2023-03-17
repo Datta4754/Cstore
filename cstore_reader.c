@@ -127,7 +127,7 @@ CStoreBeginRead(const char *filename, TupleDesc tupleDescriptor,
 	StringInfo tableFooterFilename = makeStringInfo();
 	appendStringInfo(tableFooterFilename, "%s%s", filename, CSTORE_FOOTER_FILE_SUFFIX);
 	
-	elog_node_display(INFO," where clause",whereClauseList, true);
+	//elog_node_display(INFO," where clause",whereClauseList, true);
 
 	tableFooter = CStoreReadFooter(tableFooterFilename);
 
@@ -888,19 +888,20 @@ SelectedBlockMask(StripeSkipList *stripeSkipList, StripeBloomList *stripeBloomLi
 	bool *selectedBlockMask = NULL;
 	ListCell *columnCell = NULL;
 	uint32 blockIndex = 0;
+
+	const unsigned char *key = NULL;
+	int keyLen =0;
+	uint64 hash = 0;
+
 	List *restrictInfoList = BuildRestrictInfoList(whereClauseList);
 
 	selectedBlockMask = palloc0(stripeSkipList->blockCount * sizeof(bool));
 	memset(selectedBlockMask, true, stripeSkipList->blockCount * sizeof(bool));
 
-	
-	//ListCell *each_clause = NULL;
-	const unsigned char *key;
-	int keyLen =0;
-	uint64 hash = 0;
-
-	elog_node_display(INFO,"projected Column",projectedColumnList, true);
-
+	if(whereClauseList==NULL)
+	{
+		return selectedBlockMask;
+	}
 
 	foreach(columnCell, projectedColumnList)
 	{
@@ -909,27 +910,37 @@ SelectedBlockMask(StripeSkipList *stripeSkipList, StripeBloomList *stripeBloomLi
 		FmgrInfo *comparisonFunction = NULL;
 		Node *baseConstraint = NULL;
 
-		/* Skipping unwanted blocks 
-		 * using Bloom Filter
-		 */
-		//ListCell *columnCell = columnCell;
-
-
+		/* Skipping unwanted blocks using Bloom Filter*/
+	
 		ListCell *each_clause = list_head(whereClauseList);
 
-		OpExpr *operator = lfirst(each_clause);
+		OpExpr *operator =  (OpExpr *)lfirst(each_clause);
 
-		if(operator->opfuncid==1048)
+		if(operator->opfuncid==67)
 		{
+		
+			RelabelType *relable = (RelabelType *) lfirst(list_head(operator->args));
+			Var *var_node  = (Var *) relable->arg;
+			Const *const_node = (Const *) lsecond(operator->args);
+		
+			uint32 Index = var_node->varattno-1;
 
-			Var *variable = lfirst(each_clause);
-			Const *constant = lfirst(each_clause);
-			uint32 Index = variable->varattno-1;
+			//Var *var_node  = (Var *) lfirst(list_head(operator->args));
+			//key = (const unsigned char*) VARDATA(DatumGetByteaP(const_node->constvalue));
+			//keyLen = VARSIZE(DatumGetByteaP(const_node->constvalue))- VARHDRSZ;
 
-			char* bytes = VARDATA(DatumGetByteaP(constant->constvalue));
-			keyLen = VARSIZE(DatumGetByteaP(constant->constvalue)) - VARHDRSZ;
-			key = (const unsigned char*) bytes;
+			bytea *byteaValue = DatumGetByteaP(const_node->constvalue);
 
+			keyLen = VARSIZE(byteaValue) - VARHDRSZ;
+
+			char *stringValue = (char *) palloc(keyLen + 1);
+
+			memcpy(stringValue, VARDATA(byteaValue), keyLen);
+
+			stringValue[keyLen] = '\0';
+
+			key = (const unsigned char *) stringValue;
+			
 			uint32 no_of_hashFunctions = stripeBloomList->no_of_hashFunctions;
 			uint32 filterLength = stripeBloomList->filterLength;
 			bool **bloomArray = stripeBloomList->bloomArray;
@@ -951,8 +962,8 @@ SelectedBlockMask(StripeSkipList *stripeSkipList, StripeBloomList *stripeBloomLi
 				break;
 			}
 
+			pfree(stringValue);
 		}
-		
 
 		/* if this column's data type doesn't have a comparator, skip it */
 		comparisonFunction = GetFunctionInfoOrNull(column->vartype, BTREE_AM_OID,

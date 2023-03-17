@@ -144,9 +144,13 @@ SerializeStripeFooter(StripeFooter *stripeFooter)
 	protobufStripeFooter.n_valuesizearray = stripeFooter->columnCount;
 	protobufStripeFooter.valuesizearray = (uint64_t *) stripeFooter->valueSizeArray;
 
+	protobufStripeFooter.has_no_of_elements = true;
 	protobufStripeFooter.no_of_elements = stripeFooter->no_of_elements;
+	protobufStripeFooter.has_filterlength = true;
 	protobufStripeFooter.filterlength = stripeFooter->filterLength;
+	protobufStripeFooter.has_no_of_hashfunctions = true;
 	protobufStripeFooter.no_of_hashfunctions = stripeFooter->no_of_hashFunctions;
+	protobufStripeFooter.has_falsepositiveprob = true;
 	protobufStripeFooter.falsepositiveprob = stripeFooter->falsePositiveProb;
 
 	
