@@ -515,8 +515,7 @@ LoadFilteredStripeBuffers(FILE *tableFile, StripeMetadata *stripeMetadata,
 															stripeFooter, columnCount,
 															projectedColumnMask,tupleDescriptor);
 	
-	
-	
+
 
 	bool *selectedBlockMask = SelectedBlockMask(stripeSkipList, stripeBloomList, projectedColumnList,
 												whereClauseList);
@@ -903,67 +902,67 @@ SelectedBlockMask(StripeSkipList *stripeSkipList, StripeBloomList *stripeBloomLi
 		return selectedBlockMask;
 	}
 
+	/* Skipping unwanted blocks using Bloom Filter*/
+	
+	ListCell *each_clause = list_head(whereClauseList);
+
+	OpExpr *operator =  (OpExpr *)lfirst(each_clause);
+
+	if(operator->opfuncid==67)
+	{
+		
+		RelabelType *relable = (RelabelType *) lfirst(list_head(operator->args));
+		Var *var_node  = (Var *) relable->arg;
+		Const *const_node = (Const *) lsecond(operator->args);
+	
+		uint32 Index = var_node->varattno-1;
+
+		//Var *var_node  = (Var *) lfirst(list_head(operator->args));
+			
+		bytea *byteaValue = DatumGetByteaP(const_node->constvalue);
+
+		keyLen = VARSIZE(byteaValue) - VARHDRSZ;
+
+		char *stringValue = (char *) palloc(keyLen + 1);
+
+		memcpy(stringValue, VARDATA(byteaValue), keyLen);
+
+		stringValue[keyLen] = '\0';
+
+		key = (const unsigned char *) stringValue;
+			
+		uint32 no_of_hashFunctions = stripeBloomList->no_of_hashFunctions;
+		uint32 filterLength = stripeBloomList->filterLength;
+		bool **bloomArray = stripeBloomList->bloomArray;
+		bool false_found = false;
+
+		for(uint64 i=0;i<no_of_hashFunctions;i++)
+		{
+			hash = hash_any_extended(key,keyLen,i);
+			int location = hash % filterLength;
+
+			if(bloomArray[Index][hash % filterLength]==false)
+			{
+				false_found = true;
+				break;
+			}
+		}
+		if(false_found)
+		{
+			memset(selectedBlockMask, false, stripeSkipList->blockCount * sizeof(bool));
+			return selectedBlockMask;
+		}
+
+		pfree(stringValue);
+	}
+
+
 	foreach(columnCell, projectedColumnList)
 	{
 		Var *column = lfirst(columnCell);
 		uint32 columnIndex = column->varattno - 1;
 		FmgrInfo *comparisonFunction = NULL;
 		Node *baseConstraint = NULL;
-
-		/* Skipping unwanted blocks using Bloom Filter*/
-	
-		ListCell *each_clause = list_head(whereClauseList);
-
-		OpExpr *operator =  (OpExpr *)lfirst(each_clause);
-
-		if(operator->opfuncid==67)
-		{
-		
-			RelabelType *relable = (RelabelType *) lfirst(list_head(operator->args));
-			Var *var_node  = (Var *) relable->arg;
-			Const *const_node = (Const *) lsecond(operator->args);
-		
-			uint32 Index = var_node->varattno-1;
-
-			//Var *var_node  = (Var *) lfirst(list_head(operator->args));
-			//key = (const unsigned char*) VARDATA(DatumGetByteaP(const_node->constvalue));
-			//keyLen = VARSIZE(DatumGetByteaP(const_node->constvalue))- VARHDRSZ;
-
-			bytea *byteaValue = DatumGetByteaP(const_node->constvalue);
-
-			keyLen = VARSIZE(byteaValue) - VARHDRSZ;
-
-			char *stringValue = (char *) palloc(keyLen + 1);
-
-			memcpy(stringValue, VARDATA(byteaValue), keyLen);
-
-			stringValue[keyLen] = '\0';
-
-			key = (const unsigned char *) stringValue;
-			
-			uint32 no_of_hashFunctions = stripeBloomList->no_of_hashFunctions;
-			uint32 filterLength = stripeBloomList->filterLength;
-			bool **bloomArray = stripeBloomList->bloomArray;
-			bool false_found = false;
-
-			for(uint64 i=0;i<no_of_hashFunctions;i++)
-			{
-				hash = hash_any_extended(key,keyLen,i);
-
-				if(!bloomArray[Index][hash % filterLength])
-				{
-					false_found = true;
-					break;
-				}
-			}
-			if(false_found)
-			{
-				memset(selectedBlockMask, false, stripeSkipList->blockCount * sizeof(bool));
-				break;
-			}
-
-			pfree(stringValue);
-		}
 
 		/* if this column's data type doesn't have a comparator, skip it */
 		comparisonFunction = GetFunctionInfoOrNull(column->vartype, BTREE_AM_OID,

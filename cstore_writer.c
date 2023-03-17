@@ -350,12 +350,12 @@ CStoreWriteRow(TableWriteState *writeState, Datum *columnValues, bool *columnNul
 				strcat((char*)res, (const char*)index);
 
 				hash = DatumGetUInt32(hash_any(res, sizeof(res)));
+
+				key = (const unsigned char *) VARDATA(DatumGetByteaP(columnValues[columnIndex]));
+				keyLen = VARSIZE_ANY_EXHDR(columnValues[columnIndex]) - VARHDRSZ;
 			*/
 
-			//key = (const unsigned char *) VARDATA(DatumGetByteaP(columnValues[columnIndex]));
-			//keyLen = VARSIZE_ANY_EXHDR(columnValues[columnIndex]) - VARHDRSZ;
-		
-
+			
 			bytea *byteaValue = DatumGetByteaP(columnValues[columnIndex]);
 
 			keyLen = VARSIZE(byteaValue) - VARHDRSZ;
@@ -371,6 +371,8 @@ CStoreWriteRow(TableWriteState *writeState, Datum *columnValues, bool *columnNul
 			for(uint64 i=0;i<no_of_hashFunctions;i++)
 			{
 				hash=hash_any_extended(key,keyLen,i);
+			
+				int location = hash % filterLength;
 				bloomArray[columnIndex][hash % filterLength]=true;
 			}
 
@@ -380,7 +382,7 @@ CStoreWriteRow(TableWriteState *writeState, Datum *columnValues, bool *columnNul
 		blockSkipNode->rowCount++;
 	}
 
-	writeState->stripeBloomList->bloomArray = bloomArray;
+	//writeState->stripeBloomList->bloomArray = bloomArray;
 
 	stripeSkipList->blockCount = blockIndex + 1;
 
