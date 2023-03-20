@@ -168,33 +168,6 @@ SerializeStripeFooter(StripeFooter *stripeFooter)
 }
 
 /*
-
-StringInfo SerializeBloomFooter(BloomFooter *bloomFooter)
-{
-	StringInfo bloomFooterBuffer = NULL;
-	Protobuf__BloomFooter protobufBloomFooter = PROTOBUF__BLOOM_FOOTER__INIT;
-	uint8 *bloomFooterData = NULL;
-	uint32 bloomFooterSize = 0;
-
-	protobufBloomFooter.n_bloomsizearray = bloomFooter->columnCount;
-	protobufBloomFooter.bloomsizearray = (uint64_t *) bloomFooter->bloomSizeArray;
-
-	bloomFooterSize = protobuf__bloom_footer__get_packed_size(&protobufBloomFooter);
-	bloomFooterData = palloc0(bloomFooterSize);
-	protobuf__bloom_footer__pack(&protobufBloomFooter, bloomFooterData);
-
-	bloomFooterBuffer = palloc0(sizeof(StringInfoData));
-	bloomFooterBuffer->len = bloomFooterSize;
-	bloomFooterBuffer->maxlen = bloomFooterSize;
-	bloomFooterBuffer->data = (char *) bloomFooterData;
-
-	return bloomFooterBuffer;
-
-}
-
-*/
-
-/*
  * SerializeColumnSkipList serializes a column skip list, where the colum skip
  * list includes all block skip nodes for that column. The function then returns
  * the result as a string info.
@@ -281,11 +254,14 @@ StringInfo SerializeColumnBloomList(bool *bloomArray, uint32 filterLength)
 	protobuf_c_boolean *bloomNodeArray = NULL;
 
 	
-	bloomNodeArray = palloc0(filterLength * sizeof(bool));
+	bloomNodeArray = palloc0(filterLength * sizeof(protobuf_c_boolean));
 
-	memcpy(bloomNodeArray,bloomArray,filterLength * sizeof(bool));
+	for(int i=0;i<filterLength;i++)
+	{
+		bloomNodeArray[i] = (protobuf_c_boolean) bloomArray[i];
+	}
 
- 
+	
 	protobufBloomList.n_bloomnodearray = filterLength;
 	protobufBloomList.bloomnodearray = bloomNodeArray;
 	
@@ -587,7 +563,10 @@ bool * DeserializeColumnBloomList(StringInfo buffer,uint32 sizeCount)
 	}
 	bloomArray = palloc0(sizeCount*sizeof(bool));
 
-	memcpy(bloomArray,protobufBloomList->bloomnodearray,sizeCount*sizeof(bool));
+	for(int i=0;i<sizeCount;i++)
+	{
+		bloomArray[i] = (bool)protobufBloomList->bloomnodearray[i];
+	}
 
 	protobuf__bloom_list__free_unpacked(protobufBloomList,NULL);
 

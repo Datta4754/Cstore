@@ -54,13 +54,9 @@ static StripeSkipList * CreateEmptyStripeSkipList(uint32 stripeMaxRowCount,
 												  uint32 blockRowCount,
 												  uint32 columnCount);
 
-//static bool ** CreateEmptyBloomArray(uint32 columnCount);
-
 static StripeBloomList * CreateEmptyStripeBloomList(uint32 columnCount);
 
 static StringInfo * CreateBloomListBufferArray(StripeBloomList *stripeBloomList,uint32 rowCount);
-
-//static uint32 djb2(Datum s,int k);
 
 
 static StripeMetadata FlushStripe(TableWriteState *writeState);
@@ -199,10 +195,6 @@ CStoreBeginWrite(const char *filename, CompressionType compressionType,
 	stripeWriteContext = AllocSetContextCreate(CurrentMemoryContext,
 											   "Stripe Write Memory Context",
 											   ALLOCSET_DEFAULT_SIZES);
-
-	
-	
-	//bloomFilter = CreateEmptyBloomFilter(columnCount);	
 
 
 
@@ -372,7 +364,6 @@ CStoreWriteRow(TableWriteState *writeState, Datum *columnValues, bool *columnNul
 			{
 				hash=hash_any_extended(key,keyLen,i);
 			
-				int location = hash % filterLength;
 				bloomArray[columnIndex][hash % filterLength]=true;
 			}
 
@@ -382,7 +373,6 @@ CStoreWriteRow(TableWriteState *writeState, Datum *columnValues, bool *columnNul
 		blockSkipNode->rowCount++;
 	}
 
-	//writeState->stripeBloomList->bloomArray = bloomArray;
 
 	stripeSkipList->blockCount = blockIndex + 1;
 
@@ -628,27 +618,6 @@ static StripeBloomList * CreateEmptyStripeBloomList(uint32 columnCount)
 }
 
 
-
-
-/*
-static bool ** CreateEmptyBloomArray(uint32 columnCount)
-{
-	
-	uint32 columnIndex = 0;
-    
-	bool **bloomArray= palloc0(columnCount*sizeof(bool*));
-
-	for (columnIndex = 0; columnIndex < columnCount; columnIndex++)
-	{
-			bloomArray[columnIndex] = palloc0(1000*sizeof(bool));
-	}
-
-	return bloomArray;
-}
-
-*/
-
-
 /*
 
 static uint32 djb2(Datum s,int k) 
@@ -723,14 +692,6 @@ FlushStripe(TableWriteState *writeState)
 
 	uint32 rowCount = writeState->stripeBuffers->rowCount;
 
-
-	//bool **bloomArray = writeState->bloomArray;
-
-	//BloomFilter *bloomFilter = writeState->bloomFilter;
-
-	//bool **bloomArray = stripeBloomList->bloomArray;
-	//uint32 m = stripeBloomList->m;
-
 	ColumnBlockSkipNode **columnSkipNodeArray = stripeSkipList->blockSkipNodeArray;
 	TupleDesc tupleDescriptor = writeState->tupleDescriptor;
 	uint32 columnCount = tupleDescriptor->natts;
@@ -783,14 +744,6 @@ FlushStripe(TableWriteState *writeState)
 	stripeFooter = CreateStripeFooter(stripeSkipList,skipListBufferArray,stripeBloomList,bloomListBufferArray);
 	stripeFooterBuffer = SerializeStripeFooter(stripeFooter);
 
-	/*
-
-	bloomBufferArray = CreateBloomBufferArray(bloomFilter,tupleDescriptor,stripeSkipList);
-	bloomFooter = CreateBloomFooter(bloomFilter,bloomBufferArray);
-	bloomFooterBuffer = SerializeBloomFooter(bloomFooter);
-
-	
-	*/
 
 	/*
 	 * Each stripe has three sections:
@@ -991,28 +944,6 @@ CreateStripeFooter(StripeSkipList *stripeSkipList, StringInfo *skipListBufferArr
 	return stripeFooter;
 }
 
-/*
-
-static BloomFooter * CreateBloomFooter(BloomFilter *bloomFilter, StringInfo *bloomBufferArray)
-{
-	BloomFooter *bloomFooter = NULL;
-	uint32 columnIndex = 0;
-	uint32 columnCount = bloomFilter->columnCount;
-	uint64 *bloomSizeArray = palloc0(columnCount * sizeof(uint64));
-
-	for (columnIndex = 0; columnIndex < columnCount; columnIndex++)
-	{
-		bloomSizeArray[columnIndex] = bloomBufferArray[columnIndex]->len;
-	}
-	
-	bloomFooter = palloc0(sizeof(BloomFooter));
-	bloomFooter->columnCount = columnCount;
-	bloomFooter-> bloomSizeArray = bloomSizeArray;
-
-	return bloomFooter;
-}
-
-*/
 
 
 /*

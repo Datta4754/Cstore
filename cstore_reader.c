@@ -102,12 +102,6 @@ static uint64 StripeRowCount(FILE *tableFile, StripeMetadata *stripeMetadata);
 
 
 
-
-//static BloomFilter * LoadBloomFilter(FILE *tableFile,uint32 columnCount,StripeMetadata *stripeMetadata,bool *projectedColumnMask);
-
-
-
-
 /*
  * CStoreBeginRead initializes a cstore read operation. This function returns a
  * read handle that's used during reading rows and finishing the read operation.
@@ -714,7 +708,9 @@ static StripeBloomList * LoadStripeBloomList(FILE *tableFile, StripeMetadata *st
 							 columnBloomListSize);
 
 			bool *columnBloomList = DeserializeColumnBloomList(columnBloomListBuffer,stripeSizeCount);
-			bloomArray[columnIndex] = columnBloomList;
+			bloomArray[columnIndex] = palloc0(stripeSizeCount*sizeof(bool));
+			memcpy(bloomArray[columnIndex],columnBloomList , stripeSizeCount* sizeof(bool));
+
 		}
 
 		currentColumnBloomListFileOffset+=columnBloomListSize;
@@ -725,6 +721,7 @@ static StripeBloomList * LoadStripeBloomList(FILE *tableFile, StripeMetadata *st
 		bool *columnBloomList = NULL;
 		bool firstColumn = columnIndex == 0;
 
+		bloomArray[columnIndex] = palloc0(stripeSizeCount*sizeof(bool));
 		if (!projectedColumnMask[columnIndex] && !firstColumn)
 		{
 			bloomArray[columnIndex] = NULL;
@@ -732,7 +729,7 @@ static StripeBloomList * LoadStripeBloomList(FILE *tableFile, StripeMetadata *st
 		}
 
 		columnBloomList = palloc0(stripeSizeCount * sizeof(bool));
-		bloomArray[columnIndex] = columnBloomList;
+		memcpy(bloomArray[columnIndex],columnBloomList , stripeSizeCount* sizeof(bool));
 
 	}
 
@@ -843,39 +840,6 @@ LoadStripeSkipList(FILE *tableFile, StripeMetadata *stripeMetadata,
 
 
 /*
-
-
-static BloomFilter * LoadBloomFilter(FILE *tableFile,uint32 columnCount,
-									StripeMetadata *stripeMetadata,
-									bool *projectedColumnMask)
-{
-	BloomFilter *bloomFilter = NULL;
-	bool **bloomArray = NULL;
-	StringInfo firstColumnBloomBuffer = NULL;
-	uint32 columnIndex = 0;
-	uint32 FileOffset = stripeMetadata->fileOffset;
-	
-	bloomArray = palloc0(columnCount * sizeof(bool *));
-
-	for(columnIndex=0;columnIndex<columnCount;columnIndex++)
-	{
-		bool firstColumn = columnIndex == 0;	
-
-		if (projectedColumnMask[columnIndex] || firstColumn)
-		{
-			StringInfo columnSkipListBuffer =ReadFromFile(tableFile, FileOffset,
-							                              columnSkipListSize);	
-		}
-	}
-
-}
-
-
-
-*/
-
-
-/*
  * SelectedBlockMask walks over each column's blocks and checks if a block can
  * be filtered without reading its data. The filtering happens when all rows in
  * the block can be refuted by the given qualifier conditions.
@@ -939,7 +903,6 @@ SelectedBlockMask(StripeSkipList *stripeSkipList, StripeBloomList *stripeBloomLi
 		for(uint64 i=0;i<no_of_hashFunctions;i++)
 		{
 			hash = hash_any_extended(key,keyLen,i);
-			int location = hash % filterLength;
 
 			if(bloomArray[Index][hash % filterLength]==false)
 			{
