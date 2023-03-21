@@ -72,7 +72,7 @@ static StripeBloomList * LoadStripeBloomList(FILE *tableFile, StripeMetadata *st
 											bool *projectedColumnMask, TupleDesc tupleDescriptor);
 
 static bool * SelectedBlockMask(StripeSkipList *stripeSkipList, StripeBloomList *stripeBloomList,
-								List *projectedColumnList, List *whereClauseList);
+								List *projectedColumnList, List *whereClauseList, TupleDesc tupleDescriptor);
 static List * BuildRestrictInfoList(List *whereClauseList);
 static Node * BuildBaseConstraint(Var *variable);
 static OpExpr * MakeOpExpression(Var *variable, int16 strategyNumber);
@@ -492,6 +492,7 @@ LoadFilteredStripeBuffers(FILE *tableFile, StripeMetadata *stripeMetadata,
 	uint32 columnIndex = 0;
 	uint32 columnCount = tupleDescriptor->natts;
 
+
 	StripeFooter *stripeFooter = LoadStripeFooter(tableFile, stripeMetadata,
 												  columnCount);
 	bool *projectedColumnMask = ProjectedColumnMask(columnCount, projectedColumnList);
@@ -512,7 +513,7 @@ LoadFilteredStripeBuffers(FILE *tableFile, StripeMetadata *stripeMetadata,
 
 
 	bool *selectedBlockMask = SelectedBlockMask(stripeSkipList, stripeBloomList, projectedColumnList,
-												whereClauseList);
+												whereClauseList,tupleDescriptor);
 
 	StripeSkipList *selectedBlockSkipList =
 		SelectedBlockSkipList(stripeSkipList, projectedColumnMask,
@@ -846,7 +847,7 @@ LoadStripeSkipList(FILE *tableFile, StripeMetadata *stripeMetadata,
  */
 static bool *
 SelectedBlockMask(StripeSkipList *stripeSkipList, StripeBloomList *stripeBloomList ,List *projectedColumnList,
-				  List *whereClauseList)
+				  List *whereClauseList, TupleDesc tupleDescriptor)
 {
 	bool *selectedBlockMask = NULL;
 	ListCell *columnCell = NULL;
@@ -861,6 +862,8 @@ SelectedBlockMask(StripeSkipList *stripeSkipList, StripeBloomList *stripeBloomLi
 	selectedBlockMask = palloc0(stripeSkipList->blockCount * sizeof(bool));
 	memset(selectedBlockMask, true, stripeSkipList->blockCount * sizeof(bool));
 
+	//elog_node_display(INFO," where clause",whereClauseList, true);
+
 	if(whereClauseList==NULL)
 	{
 		return selectedBlockMask;
@@ -872,17 +875,52 @@ SelectedBlockMask(StripeSkipList *stripeSkipList, StripeBloomList *stripeBloomLi
 
 	OpExpr *operator =  (OpExpr *)lfirst(each_clause);
 
+	bool found = false;
+	uint32 Index = 0;
+
+	Const *const_node = (Const *) lsecond(operator->args);
+   
+
+	if( operator->opfuncid==1048)
+	{
+		Var *var_node  = (Var *) lfirst(list_head(operator->args));
+		Index = var_node->varattno-1;
+		found = true;
+
+	}
+
 	if(operator->opfuncid==67)
 	{
-		
-		RelabelType *relable = (RelabelType *) lfirst(list_head(operator->args));
-		Var *var_node  = (Var *) relable->arg;
-		Const *const_node = (Const *) lsecond(operator->args);
-	
-		uint32 Index = var_node->varattno-1;
+		Expr *expr= (Expr *) lfirst(list_head(operator->args));
+		Var *var_node = NULL;
+		 
+		if (IsA(expr, Var))
+		{
+			var_node  = (Var *) expr;
+		}
+		else
+		{
+			RelabelType *relabel = (RelabelType *) expr;
+			var_node  = (Var *) relabel->arg;
+		}
+		Index = var_node->varattno-1;
+		found = true;
+	}
 
-		//Var *var_node  = (Var *) lfirst(list_head(operator->args));
-			
+	/*
+	
+	RelabelType *relable = (RelabelType *) lfirst(list_head(operator->args));
+	Var *var_node  = (Var *) relable->arg;
+	
+	*/
+	
+
+	Form_pg_attribute attributeForm = TupleDescAttr(tupleDescriptor, Index);
+	bool columnTypeByValue = attributeForm->attbyval;
+
+	
+	if(found && !columnTypeByValue)
+	{	
 		bytea *byteaValue = DatumGetByteaP(const_node->constvalue);
 
 		keyLen = VARSIZE(byteaValue) - VARHDRSZ;
@@ -894,6 +932,10 @@ SelectedBlockMask(StripeSkipList *stripeSkipList, StripeBloomList *stripeBloomLi
 		stringValue[keyLen] = '\0';
 
 		key = (const unsigned char *) stringValue;
+		
+
+		//key = (const unsigned char *)VARDATA(DatumGetPointer(const_node->constvalue));
+		//keyLen = VARSIZE(DatumGetPointer(const_node->constvalue)) - VARHDRSZ;
 			
 		uint32 no_of_hashFunctions = stripeBloomList->no_of_hashFunctions;
 		uint32 filterLength = stripeBloomList->filterLength;
@@ -918,6 +960,7 @@ SelectedBlockMask(StripeSkipList *stripeSkipList, StripeBloomList *stripeBloomLi
 
 		pfree(stringValue);
 	}
+	
 
 
 	foreach(columnCell, projectedColumnList)

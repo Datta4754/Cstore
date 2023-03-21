@@ -341,12 +341,75 @@ CStoreWriteRow(TableWriteState *writeState, Datum *columnValues, bool *columnNul
 				strcpy((char*)res, (const char*)key);
 				strcat((char*)res, (const char*)index);
 
+
+			key = DatumGetPointer(columnValues[columnIndex]);
+			
 				hash = DatumGetUInt32(hash_any(res, sizeof(res)));
 
 				key = (const unsigned char *) VARDATA(DatumGetByteaP(columnValues[columnIndex]));
 				keyLen = VARSIZE_ANY_EXHDR(columnValues[columnIndex]) - VARHDRSZ;
 			*/
 
+
+			if(!columnTypeByValue)
+			{
+				
+				bytea *byteaValue = DatumGetByteaP(columnValues[columnIndex]);
+
+				keyLen = VARSIZE(byteaValue) - VARHDRSZ;
+
+				char *stringValue = (char *) palloc(keyLen + 1);
+
+				memcpy(stringValue, VARDATA(byteaValue), keyLen);
+
+				stringValue[keyLen] = '\0';
+
+				key = (const unsigned char *) stringValue;	
+
+				for(uint64 i=0;i<no_of_hashFunctions;i++)
+				{
+					hash=hash_any_extended(key,keyLen,i);	
+			
+					bloomArray[columnIndex][hash % filterLength] = true;
+				}
+				pfree(stringValue);
+
+			}
+			
+			/*
+			
+			if(columnTypeByValue)
+			{
+				int32 i = DatumGetInt32(columnValues[columnIndex]);	
+				key = (const unsigned char*) &i;
+				keyLen  = strlen((const char*)key);
+
+			}
+
+			elsestringValue
+			{
+				bytea *byteaValue = DatumGetByteaP(columnValues[columnIndex]);
+
+				keyLen = VARSIZE(byteaValue) - VARHDRSZ;
+
+				char *stringValue = (char *) palloc(keyLen + 1);
+
+				memcpy(stringValue, VARDATA(byteaValue), keyLen);
+
+				stringValue[keyLen] = '\0';
+
+				key = (const unsigned char *) stringValue;
+			}
+			
+			*/
+
+			//key =  (const unsigned char*) VARDATA(DatumGetPointer(columnValues[columnIndex]));
+			
+			//keyLen = VARSIZE(DatumGetPointer(columnValues[columnIndex])) - VARHDRSZ;
+
+		
+
+			/*
 			
 			bytea *byteaValue = DatumGetByteaP(columnValues[columnIndex]);
 
@@ -359,15 +422,21 @@ CStoreWriteRow(TableWriteState *writeState, Datum *columnValues, bool *columnNul
 			stringValue[keyLen] = '\0';
 
 			key = (const unsigned char *) stringValue;
+
+			*/
 	
+		/*
+		
 			for(uint64 i=0;i<no_of_hashFunctions;i++)
 			{
-				hash=hash_any_extended(key,keyLen,i);
+				hash=hash_any_extended(key,keyLen,i);	
 			
-				bloomArray[columnIndex][hash % filterLength]=true;
+				bloomArray[columnIndex][hash % filterLength] = true;
 			}
 
-			pfree(stringValue);
+		
+		*/
+			//pfree(stringValue);
 		}
 
 		blockSkipNode->rowCount++;
