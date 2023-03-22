@@ -244,6 +244,7 @@ CStoreWriteRow(TableWriteState *writeState, Datum *columnValues, bool *columnNul
 	StripeSkipList *stripeSkipList = writeState->stripeSkipList;
 
 	const unsigned char *key = NULL;
+	char *stringValue = NULL;
 
 	uint64 no_of_hashFunctions=0;
 	uint64 filterLength=0;
@@ -342,7 +343,7 @@ CStoreWriteRow(TableWriteState *writeState, Datum *columnValues, bool *columnNul
 				strcat((char*)res, (const char*)index);
 
 
-			key = DatumGetPointer(columnValues[columnIndex]);
+				key = DatumGetPointer(columnValues[columnIndex]);
 			
 				hash = DatumGetUInt32(hash_any(res, sizeof(res)));
 
@@ -350,31 +351,46 @@ CStoreWriteRow(TableWriteState *writeState, Datum *columnValues, bool *columnNul
 				keyLen = VARSIZE_ANY_EXHDR(columnValues[columnIndex]) - VARHDRSZ;
 			*/
 
+			if(columnTypeByValue)
+			{
+				keyLen = sizeof(columnValues[columnIndex]);
+    			char* ptr = (char*)&columnValues[columnIndex];
 
-			if(!columnTypeByValue)
+				stringValue = (char *) palloc(keyLen + 1);
+
+				memcpy(stringValue, ptr, keyLen);
+
+				stringValue[keyLen] = '\0';
+
+    			key = (const unsigned char *) stringValue;	
+
+			}
+			else
 			{
 				
 				bytea *byteaValue = DatumGetByteaP(columnValues[columnIndex]);
 
 				keyLen = VARSIZE(byteaValue) - VARHDRSZ;
 
-				char *stringValue = (char *) palloc(keyLen + 1);
+				stringValue = (char *) palloc(keyLen + 1);
 
 				memcpy(stringValue, VARDATA(byteaValue), keyLen);
 
 				stringValue[keyLen] = '\0';
 
 				key = (const unsigned char *) stringValue;	
-
-				for(uint64 i=0;i<no_of_hashFunctions;i++)
-				{
-					hash=hash_any_extended(key,keyLen,i);	
-			
-					bloomArray[columnIndex][hash % filterLength] = true;
-				}
-				pfree(stringValue);
-
 			}
+
+
+			for(uint64 i=0;i<no_of_hashFunctions;i++)
+			{
+				hash=hash_any_extended(key,keyLen,i);	
+			
+				bloomArray[columnIndex][hash % filterLength] = true;
+			}
+
+			pfree(stringValue);
+		
 			
 			/*
 			
@@ -386,7 +402,7 @@ CStoreWriteRow(TableWriteState *writeState, Datum *columnValues, bool *columnNul
 
 			}
 
-			elsestringValue
+			else
 			{
 				bytea *byteaValue = DatumGetByteaP(columnValues[columnIndex]);
 

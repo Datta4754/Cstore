@@ -506,15 +506,21 @@ LoadFilteredStripeBuffers(FILE *tableFile, StripeMetadata *stripeMetadata,
 														tupleDescriptor);
 
 
+
 	StripeBloomList *stripeBloomList = LoadStripeBloomList(tableFile, stripeMetadata,
 															stripeFooter, columnCount,
 															projectedColumnMask,tupleDescriptor);
+
+											
 	
 
 
-	bool *selectedBlockMask = SelectedBlockMask(stripeSkipList, stripeBloomList, projectedColumnList,
+
+	bool *selectedBlockMask = SelectedBlockMask(stripeSkipList, stripeBloomList,projectedColumnList,
 												whereClauseList,tupleDescriptor);
 
+	
+	
 	StripeSkipList *selectedBlockSkipList =
 		SelectedBlockSkipList(stripeSkipList, projectedColumnMask,
 							  selectedBlockMask);
@@ -846,7 +852,7 @@ LoadStripeSkipList(FILE *tableFile, StripeMetadata *stripeMetadata,
  * the block can be refuted by the given qualifier conditions.
  */
 static bool *
-SelectedBlockMask(StripeSkipList *stripeSkipList, StripeBloomList *stripeBloomList ,List *projectedColumnList,
+SelectedBlockMask(StripeSkipList *stripeSkipList,StripeBloomList *stripeBloomList,List *projectedColumnList,
 				  List *whereClauseList, TupleDesc tupleDescriptor)
 {
 	bool *selectedBlockMask = NULL;
@@ -854,6 +860,7 @@ SelectedBlockMask(StripeSkipList *stripeSkipList, StripeBloomList *stripeBloomLi
 	uint32 blockIndex = 0;
 
 	const unsigned char *key = NULL;
+	char *stringValue = NULL;
 	int keyLen =0;
 	uint64 hash = 0;
 
@@ -862,6 +869,8 @@ SelectedBlockMask(StripeSkipList *stripeSkipList, StripeBloomList *stripeBloomLi
 	selectedBlockMask = palloc0(stripeSkipList->blockCount * sizeof(bool));
 	memset(selectedBlockMask, true, stripeSkipList->blockCount * sizeof(bool));
 
+	
+	
 	//elog_node_display(INFO," where clause",whereClauseList, true);
 
 	if(whereClauseList==NULL)
@@ -908,30 +917,47 @@ SelectedBlockMask(StripeSkipList *stripeSkipList, StripeBloomList *stripeBloomLi
 	}
 
 	/*
-	
 	RelabelType *relable = (RelabelType *) lfirst(list_head(operator->args));
 	Var *var_node  = (Var *) relable->arg;
-	
 	*/
+	
 	
 
 	Form_pg_attribute attributeForm = TupleDescAttr(tupleDescriptor, Index);
 	bool columnTypeByValue = attributeForm->attbyval;
 
 	
-	if(found && !columnTypeByValue)
+	if(found)
 	{	
-		bytea *byteaValue = DatumGetByteaP(const_node->constvalue);
+		if(columnTypeByValue)
+		{
+			keyLen = sizeof(const_node->constvalue);
+    		char* ptr = (char*)&const_node->constvalue;
 
-		keyLen = VARSIZE(byteaValue) - VARHDRSZ;
+			stringValue = (char *) palloc(keyLen + 1);
 
-		char *stringValue = (char *) palloc(keyLen + 1);
+			memcpy(stringValue, ptr, keyLen);
 
-		memcpy(stringValue, VARDATA(byteaValue), keyLen);
+			stringValue[keyLen] = '\0';
 
-		stringValue[keyLen] = '\0';
+    		key = (const unsigned char *) stringValue;
+		}
+		else
+		{
+		
+			bytea *byteaValue = DatumGetByteaP(const_node->constvalue);
 
-		key = (const unsigned char *) stringValue;
+			keyLen = VARSIZE(byteaValue) - VARHDRSZ;
+
+			stringValue = (char *) palloc(keyLen + 1);
+
+			memcpy(stringValue, VARDATA(byteaValue), keyLen);
+
+			stringValue[keyLen] = '\0';
+
+			key = (const unsigned char *) stringValue;
+		}
+		
 		
 
 		//key = (const unsigned char *)VARDATA(DatumGetPointer(const_node->constvalue));
@@ -961,7 +987,8 @@ SelectedBlockMask(StripeSkipList *stripeSkipList, StripeBloomList *stripeBloomLi
 		pfree(stringValue);
 	}
 	
-
+	
+	
 
 	foreach(columnCell, projectedColumnList)
 	{
