@@ -13,7 +13,6 @@
  *-------------------------------------------------------------------------
  */
 
-
 #include "postgres.h"
 #include "cstore_fdw.h"
 #include "cstore_metadata_serialization.h"
@@ -41,6 +40,8 @@
 
 #include<access/hash.h>
 #include "access/tupmacs.h"
+
+#include "utils/builtins.h"
 
 
 /* static function declarations */
@@ -857,19 +858,31 @@ SelectedBlockMask(StripeSkipList *stripeSkipList,StripeBloomList *stripeBloomLis
 {
 	bool *selectedBlockMask = NULL;
 	ListCell *columnCell = NULL;
+	ListCell *each_clause = NULL;
 	uint32 blockIndex = 0;
 
 	const unsigned char *key = NULL;
-	char *stringValue = NULL;
+	bool **bloomArray = NULL;
+
 	int keyLen =0;
 	uint64 hash = 0;
+	uint32 no_of_hashFunctions=0;
+	uint32 filterLength = 0;
+	bool false_found = false;
+	bool found = false;
+	uint32 Index = 0;
 
 	List *restrictInfoList = BuildRestrictInfoList(whereClauseList);
+
+	OpExpr *operator = NULL;
+	Const *const_node =NULL;
+
+	Form_pg_attribute attributeForm = NULL;
+	bool columnTypeByValue = NULL;
 
 	selectedBlockMask = palloc0(stripeSkipList->blockCount * sizeof(bool));
 	memset(selectedBlockMask, true, stripeSkipList->blockCount * sizeof(bool));
 
-	
 	
 	//elog_node_display(INFO," where clause",whereClauseList, true);
 
@@ -880,22 +893,17 @@ SelectedBlockMask(StripeSkipList *stripeSkipList,StripeBloomList *stripeBloomLis
 
 	/* Skipping unwanted blocks using Bloom Filter*/
 	
-	ListCell *each_clause = list_head(whereClauseList);
+	
+	each_clause = list_head(whereClauseList);
 
-	OpExpr *operator =  (OpExpr *)lfirst(each_clause);
-
-	bool found = false;
-	uint32 Index = 0;
-
-	Const *const_node = (Const *) lsecond(operator->args);
+	operator =  (OpExpr *)lfirst(each_clause);
+	const_node = (Const *) lsecond(operator->args);
    
-
-	if( operator->opfuncid==1048)
+	if( operator->opfuncid==1048 || operator->opfuncid==65)
 	{
 		Var *var_node  = (Var *) lfirst(list_head(operator->args));
 		Index = var_node->varattno-1;
 		found = true;
-
 	}
 
 	if(operator->opfuncid==67)
@@ -920,53 +928,28 @@ SelectedBlockMask(StripeSkipList *stripeSkipList,StripeBloomList *stripeBloomLis
 	RelabelType *relable = (RelabelType *) lfirst(list_head(operator->args));
 	Var *var_node  = (Var *) relable->arg;
 	*/
-	
-	
 
-	Form_pg_attribute attributeForm = TupleDescAttr(tupleDescriptor, Index);
-	bool columnTypeByValue = attributeForm->attbyval;
-
+	attributeForm = TupleDescAttr(tupleDescriptor, Index);
+	columnTypeByValue = attributeForm->attbyval;
 	
 	if(found)
 	{	
 		if(columnTypeByValue)
 		{
+			key = (const unsigned char*) &const_node->constvalue;
 			keyLen = sizeof(const_node->constvalue);
-    		char* ptr = (char*)&const_node->constvalue;
-
-			stringValue = (char *) palloc(keyLen + 1);
-
-			memcpy(stringValue, ptr, keyLen);
-
-			stringValue[keyLen] = '\0';
-
-    		key = (const unsigned char *) stringValue;
 		}
 		else
 		{
-		
 			bytea *byteaValue = DatumGetByteaP(const_node->constvalue);
-
+			key = (const unsigned char*) VARDATA(byteaValue);
 			keyLen = VARSIZE(byteaValue) - VARHDRSZ;
-
-			stringValue = (char *) palloc(keyLen + 1);
-
-			memcpy(stringValue, VARDATA(byteaValue), keyLen);
-
-			stringValue[keyLen] = '\0';
-
-			key = (const unsigned char *) stringValue;
 		}
 		
-		
-
-		//key = (const unsigned char *)VARDATA(DatumGetPointer(const_node->constvalue));
-		//keyLen = VARSIZE(DatumGetPointer(const_node->constvalue)) - VARHDRSZ;
-			
-		uint32 no_of_hashFunctions = stripeBloomList->no_of_hashFunctions;
-		uint32 filterLength = stripeBloomList->filterLength;
-		bool **bloomArray = stripeBloomList->bloomArray;
-		bool false_found = false;
+		no_of_hashFunctions = stripeBloomList->no_of_hashFunctions;
+		filterLength = stripeBloomList->filterLength;
+		bloomArray = stripeBloomList->bloomArray;
+	
 
 		for(uint64 i=0;i<no_of_hashFunctions;i++)
 		{
@@ -984,12 +967,8 @@ SelectedBlockMask(StripeSkipList *stripeSkipList,StripeBloomList *stripeBloomLis
 			return selectedBlockMask;
 		}
 
-		pfree(stringValue);
 	}
 	
-	
-	
-
 	foreach(columnCell, projectedColumnList)
 	{
 		Var *column = lfirst(columnCell);

@@ -43,7 +43,7 @@
 #include "utils/hashutils.h"
 
 #include<access/hash.h>
-#include<string.h>
+
 
 
 static void CStoreWriteFooter(StringInfo footerFileName, TableFooter *tableFooter);
@@ -244,7 +244,6 @@ CStoreWriteRow(TableWriteState *writeState, Datum *columnValues, bool *columnNul
 	StripeSkipList *stripeSkipList = writeState->stripeSkipList;
 
 	const unsigned char *key = NULL;
-	char *stringValue = NULL;
 
 	uint64 no_of_hashFunctions=0;
 	uint64 filterLength=0;
@@ -332,24 +331,21 @@ CStoreWriteRow(TableWriteState *writeState, Datum *columnValues, bool *columnNul
 									  columnTypeByValue, columnTypeLength,
 									  columnCollation, comparisonFunction);
 			
-			/*
-				unsigned char buf[32];
-  				sprintf((char*)buf, "%d", i);
-  				index = (const unsigned char*)buf;
-				indexLen = strlen((const char*)index);
-
-				res = malloc(keyLen + indexLen + 1);
-				strcpy((char*)res, (const char*)key);
-				strcat((char*)res, (const char*)index);
-
-
-				key = DatumGetPointer(columnValues[columnIndex]);
 			
-				hash = DatumGetUInt32(hash_any(res, sizeof(res)));
+			if(columnTypeByValue)
+			{
+				key = (const unsigned char*) &columnValues[columnIndex];
+				keyLen = sizeof(columnValues[columnIndex]);
+			}
+			else
+			{
+		
+				bytea *byteaValue = DatumGetByteaP(columnValues[columnIndex]);
+				key = (const unsigned char *) VARDATA(byteaValue);
+				keyLen = VARSIZE(byteaValue) - VARHDRSZ;
+			}
 
-				key = (const unsigned char *) VARDATA(DatumGetByteaP(columnValues[columnIndex]));
-				keyLen = VARSIZE_ANY_EXHDR(columnValues[columnIndex]) - VARHDRSZ;
-			*/
+			/*
 
 			if(columnTypeByValue)
 			{
@@ -380,7 +376,9 @@ CStoreWriteRow(TableWriteState *writeState, Datum *columnValues, bool *columnNul
 
 				key = (const unsigned char *) stringValue;	
 			}
-
+				pfree(stringValue);
+			
+			*/
 
 			for(uint64 i=0;i<no_of_hashFunctions;i++)
 			{
@@ -389,70 +387,7 @@ CStoreWriteRow(TableWriteState *writeState, Datum *columnValues, bool *columnNul
 				bloomArray[columnIndex][hash % filterLength] = true;
 			}
 
-			pfree(stringValue);
-		
 			
-			/*
-			
-			if(columnTypeByValue)
-			{
-				int32 i = DatumGetInt32(columnValues[columnIndex]);	
-				key = (const unsigned char*) &i;
-				keyLen  = strlen((const char*)key);
-
-			}
-
-			else
-			{
-				bytea *byteaValue = DatumGetByteaP(columnValues[columnIndex]);
-
-				keyLen = VARSIZE(byteaValue) - VARHDRSZ;
-
-				char *stringValue = (char *) palloc(keyLen + 1);
-
-				memcpy(stringValue, VARDATA(byteaValue), keyLen);
-
-				stringValue[keyLen] = '\0';
-
-				key = (const unsigned char *) stringValue;
-			}
-			
-			*/
-
-			//key =  (const unsigned char*) VARDATA(DatumGetPointer(columnValues[columnIndex]));
-			
-			//keyLen = VARSIZE(DatumGetPointer(columnValues[columnIndex])) - VARHDRSZ;
-
-		
-
-			/*
-			
-			bytea *byteaValue = DatumGetByteaP(columnValues[columnIndex]);
-
-			keyLen = VARSIZE(byteaValue) - VARHDRSZ;
-
-			char *stringValue = (char *) palloc(keyLen + 1);
-
-			memcpy(stringValue, VARDATA(byteaValue), keyLen);
-
-			stringValue[keyLen] = '\0';
-
-			key = (const unsigned char *) stringValue;
-
-			*/
-	
-		/*
-		
-			for(uint64 i=0;i<no_of_hashFunctions;i++)
-			{
-				hash=hash_any_extended(key,keyLen,i);	
-			
-				bloomArray[columnIndex][hash % filterLength] = true;
-			}
-
-		
-		*/
-			//pfree(stringValue);
 		}
 
 		blockSkipNode->rowCount++;
