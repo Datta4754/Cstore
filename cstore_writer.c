@@ -615,7 +615,7 @@ static StripeBloomList * CreateEmptyStripeBloomList(uint32 columnCount)
 	uint64 no_of_elements = DEFAULT_STRIPE_ROW_COUNT;
 	double falsePositiveProb = 0.01;
 	uint64 no_of_hashFunctions= -(log(falsePositiveProb)/log(2));
-	uint64 filterLength = (no_of_hashFunctions * no_of_elements)/log(2);
+	uint64 filterLength = ((no_of_hashFunctions * no_of_elements)/log(2)) / BITS_PER_BYTE;
 	
 
 	bool **bloomArray= palloc0(columnCount*sizeof(bool*));
