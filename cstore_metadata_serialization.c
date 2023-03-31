@@ -20,7 +20,7 @@
 #include "access/tupmacs.h"
 
 
-/* local functions forward declarations */
+/* local functions forward declarations */	
 static ProtobufCBinaryData DatumToProtobufBinary(Datum datum, bool typeByValue,
 												 int typeLength);
 static Datum ProtobufBinaryToDatum(ProtobufCBinaryData protobufBinary,
@@ -251,19 +251,32 @@ StringInfo SerializeColumnBloomList(bool *bloomArray, uint32 filterLength)
 
 	Protobuf__BloomList protobufBloomList = PROTOBUF__BLOOM_LIST__INIT;
 
-	protobuf_c_boolean *bloomNodeArray = NULL;
+	ProtobufCBinaryData bloomNodeArray ;
 
+	//bloomNodeArray = palloc0(filterLength * sizeof(ProtobufCBinaryData));y
+
+	uint8_t *packed_array = NULL;
 	
-	bloomNodeArray = palloc0(filterLength * sizeof(protobuf_c_boolean));
+	packed_array =palloc0((filterLength/BITS_PER_BYTE +1));
 
-	for(int i=0;i<filterLength;i++)
+	for(int i=0; i<filterLength; i++)
 	{
-		bloomNodeArray[i] = (protobuf_c_boolean) bloomArray[i];
+		if(bloomArray[i])
+		{
+			packed_array[i/8] |= (1 << (i % 8));
+		}
+		else
+		{
+			packed_array[i / 8] &= ~(1 << (i % 8));
+		}
+
 	}
 
-	
-	protobufBloomList.n_bloomnodearray = filterLength;
+	bloomNodeArray.data = packed_array;
+	bloomNodeArray.len = filterLength/BITS_PER_BYTE +1;
+
 	protobufBloomList.bloomnodearray = bloomNodeArray;
+	protobufBloomList.has_bloomnodearray = true;
 	
 	bloomListSize = protobuf__bloom_list__get_packed_size(&protobufBloomList);
 	bloomListData = palloc0(bloomListSize);
@@ -273,6 +286,9 @@ StringInfo SerializeColumnBloomList(bool *bloomArray, uint32 filterLength)
 
 	bloomListBuffer = palloc0(sizeof(StringInfoData));
 	bloomListBuffer->len = bloomListSize;
+
+	//elog(INFO,"length is %d\n",bloomListSize);
+
 	bloomListBuffer->maxlen = bloomListSize;
 	bloomListBuffer->data = (char *) bloomListData;
 
@@ -504,7 +520,7 @@ uint32 DeserializeSizeCount(StringInfo buffer)
 		ereport(ERROR, (errmsg("could not unpack column store"),
 						errdetail("invalid bloom list buffer")));
 	}
-	sizeCount = protobufBloomList->n_bloomnodearray;
+	sizeCount = protobufBloomList-> bloomnodearray.len;
 	protobuf__bloom_list__free_unpacked(protobufBloomList, NULL);
 
 	return sizeCount;
@@ -549,6 +565,8 @@ bool * DeserializeColumnBloomList(StringInfo buffer,uint32 sizeCount)
 {
 	bool *bloomArray = NULL;
 	Protobuf__BloomList *protobufBloomList = NULL;
+
+	uint64 filterLength = sizeCount * BITS_PER_BYTE;
 	
 	protobufBloomList = protobuf__bloom_list__unpack(NULL, buffer->len,(uint8 *) buffer->data);
 	if(protobufBloomList==NULL)
@@ -556,17 +574,27 @@ bool * DeserializeColumnBloomList(StringInfo buffer,uint32 sizeCount)
 		ereport(ERROR, (errmsg("could not unpack column store"),
 						errdetail("invalid bloom list buffer")));
 	}
-	if(protobufBloomList->n_bloomnodearray!=sizeCount)
+	if(protobufBloomList->bloomnodearray.len!=sizeCount)
 	{
 		ereport(ERROR, (errmsg("could not unpack column store"),
 						errdetail("size bloom node count and size count don't match")));
 	}
-	bloomArray = palloc0(sizeCount*sizeof(bool));
 
-	for(int i=0;i<sizeCount;i++)
+	bloomArray = palloc0(filterLength*sizeof(bool));
+
+	for (int i = 0; i < filterLength; i++)
 	{
-		bloomArray[i] = (bool)protobufBloomList->bloomnodearray[i];
+    	if (protobufBloomList->bloomnodearray.data[i / 8] & (1 << (i % 8))) 
+		{
+        	bloomArray[i] = true; 
+   		} 
+		else
+		{
+        	bloomArray[i] = false; 
+    	}
 	}
+
+	//memcpy(bloomArray,protobufBloomList->bloomnodearray.data,sizeCount*sizeof(bool));
 
 	protobuf__bloom_list__free_unpacked(protobufBloomList,NULL);
 

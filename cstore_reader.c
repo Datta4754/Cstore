@@ -68,9 +68,17 @@ static StripeSkipList * LoadStripeSkipList(FILE *tableFile,
 										   bool *projectedColumnMask,
 										   TupleDesc tupleDescriptor);
 
+/*
 static StripeBloomList * LoadStripeBloomList(FILE *tableFile, StripeMetadata *stripeMetadata,
 											StripeFooter *stripeFooter,uint32 columnCount,
 											bool *projectedColumnMask, TupleDesc tupleDescriptor);
+*/
+
+
+static StripeBloomList *LoadStripeBloomList(FILE *tableFile, StripeMetadata *stripeMetadata,
+											StripeFooter *stripeFooter,uint32 columnCount,
+											List *whereClauseList);
+
 
 static bool * SelectedBlockMask(StripeSkipList *stripeSkipList, StripeBloomList *stripeBloomList,
 								List *projectedColumnList, List *whereClauseList, TupleDesc tupleDescriptor);
@@ -100,7 +108,6 @@ static StringInfo ReadFromFile(FILE *file, uint64 offset, uint32 size);
 static void ResetUncompressedBlockData(ColumnBlockData **blockDataArray,
 									   uint32 columnCount);
 static uint64 StripeRowCount(FILE *tableFile, StripeMetadata *stripeMetadata);
-
 
 
 /*
@@ -510,7 +517,7 @@ LoadFilteredStripeBuffers(FILE *tableFile, StripeMetadata *stripeMetadata,
 
 	StripeBloomList *stripeBloomList = LoadStripeBloomList(tableFile, stripeMetadata,
 															stripeFooter, columnCount,
-															projectedColumnMask,tupleDescriptor);
+															whereClauseList);
 
 											
 	
@@ -681,8 +688,108 @@ LoadStripeFooter(FILE *tableFile, StripeMetadata *stripeMetadata,
 
 static StripeBloomList * LoadStripeBloomList(FILE *tableFile, StripeMetadata *stripeMetadata,
 				   StripeFooter *stripeFooter, uint32 columnCount,
-				   bool *projectedColumnMask,
-				   TupleDesc tupleDescriptor)
+				    List *whereClauseList)
+{
+	StripeBloomList *stripeBloomList = NULL;
+	bool **bloomArray = NULL;
+	StringInfo firstColumnBloomListBuffer = NULL;
+	uint64 currentColumnBloomListFileOffset = 0;
+	uint32 columnIndex=0;
+	uint32 stripeSizeCount = 0;
+	uint32 stripeColumnCount = stripeFooter->columnCount;
+
+	ListCell *each_clause = NULL;
+	uint32 Index = 0;
+	OpExpr *operator = NULL;
+
+	uint64 new_fileOffset = stripeMetadata->fileOffset+stripeMetadata->skipListLength;
+
+
+	if(whereClauseList==NULL)
+	{
+		return stripeBloomList;
+	}
+
+	firstColumnBloomListBuffer = ReadFromFile(tableFile, new_fileOffset,
+												stripeFooter->bloomListSizeArray[0]);
+	
+	stripeSizeCount = DeserializeSizeCount(firstColumnBloomListBuffer);
+	
+
+	bloomArray = palloc0(columnCount*sizeof(bool *));
+	currentColumnBloomListFileOffset = stripeMetadata->fileOffset+stripeMetadata->skipListLength;
+
+	
+	each_clause = list_head(whereClauseList);
+
+	operator =  (OpExpr *)lfirst(each_clause);
+
+	if( operator->opfuncid==1048 || operator->opfuncid==65)
+	{
+		Var *var_node  = (Var *) lfirst(list_head(operator->args));
+		Index = var_node->varattno-1;
+	}
+
+	if(operator->opfuncid==67)
+	{
+		Expr *expr= (Expr *) lfirst(list_head(operator->args));
+		Var *var_node = NULL;
+		 
+		if (IsA(expr, Var))
+		{
+			var_node  = (Var *) expr;
+		}
+		else
+		{
+			RelabelType *relabel = (RelabelType *) expr;
+			var_node  = (Var *) relabel->arg;
+		}
+		Index = var_node->varattno-1;
+	}
+
+
+	for (columnIndex = 0; columnIndex < stripeColumnCount; columnIndex++)
+	{
+		uint64 columnBloomListSize = stripeFooter->bloomListSizeArray[columnIndex];
+		
+		if (columnIndex==Index)
+		{
+			
+			StringInfo columnBloomListBuffer = ReadFromFile(tableFile, currentColumnBloomListFileOffset,
+							 columnBloomListSize);
+
+			bool *columnBloomList = DeserializeColumnBloomList(columnBloomListBuffer,stripeSizeCount);
+			bloomArray[columnIndex] = palloc0((stripeSizeCount*BITS_PER_BYTE)*sizeof(bool));
+			memcpy(bloomArray[columnIndex],columnBloomList , (stripeSizeCount*BITS_PER_BYTE)* sizeof(bool));
+
+		}
+		else
+		{
+			bloomArray[columnIndex] = NULL;
+		}
+
+		currentColumnBloomListFileOffset+=columnBloomListSize;
+
+	}
+
+	stripeBloomList = palloc0(sizeof(StripeBloomList));
+	stripeBloomList->bloomArray = bloomArray;
+	stripeBloomList->columnCount = columnCount;
+
+	stripeBloomList->filterLength = stripeFooter->filterLength;
+	stripeBloomList->no_of_elements = stripeFooter->no_of_elements;
+	stripeBloomList->no_of_hashFunctions = stripeFooter->no_of_hashFunctions;
+	stripeBloomList->falsePositiveProb = stripeFooter->falsePositiveProb;
+	
+	return stripeBloomList;
+
+}
+
+/*
+
+static StripeBloomList * LoadStripeBloomList(FILE *tableFile, StripeMetadata *stripeMetadata,
+				   StripeFooter *stripeFooter, uint32 columnCount,
+				    List *whereClauseList)
 {
 
 	StripeBloomList *stripeBloomList = NULL;
@@ -752,6 +859,8 @@ static StripeBloomList * LoadStripeBloomList(FILE *tableFile, StripeMetadata *st
 	
 	return stripeBloomList;
 }
+
+*/
 
 /* Reads the skip list for the given stripe. */
 static StripeSkipList *
@@ -862,15 +971,13 @@ SelectedBlockMask(StripeSkipList *stripeSkipList,StripeBloomList *stripeBloomLis
 	uint32 blockIndex = 0;
 
 	const unsigned char *key = NULL;
-	bool **bloomArray = NULL;
-
+	
 	int keyLen =0;
-	uint64 hash = 0;
-	uint32 no_of_hashFunctions=0;
-	uint32 filterLength = 0;
-	bool false_found = false;
 	bool found = false;
 	uint32 Index = 0;
+
+	bool false_found = false;
+	uint64 hash = 0;
 
 	List *restrictInfoList = BuildRestrictInfoList(whereClauseList);
 
@@ -928,6 +1035,12 @@ SelectedBlockMask(StripeSkipList *stripeSkipList,StripeBloomList *stripeBloomLis
 	RelabelType *relable = (RelabelType *) lfirst(list_head(operator->args));
 	Var *var_node  = (Var *) relable->arg;
 	*/
+	
+
+	if(stripeBloomList->bloomArray[Index]==NULL)
+	{
+		elog(INFO,"error found\n");
+	}
 
 	attributeForm = TupleDescAttr(tupleDescriptor, Index);
 	columnTypeByValue = attributeForm->attbyval;
@@ -946,27 +1059,23 @@ SelectedBlockMask(StripeSkipList *stripeSkipList,StripeBloomList *stripeBloomLis
 			keyLen = VARSIZE(byteaValue) - VARHDRSZ;
 		}
 		
-		no_of_hashFunctions = stripeBloomList->no_of_hashFunctions;
-		filterLength = stripeBloomList->filterLength;
-		bloomArray = stripeBloomList->bloomArray;
-	
-
-		for(uint64 i=0;i<no_of_hashFunctions;i++)
+		for(uint64 i=0;i<stripeBloomList->no_of_hashFunctions;i++)
 		{
 			hash = hash_any_extended(key,keyLen,i);
 
-			if(bloomArray[Index][hash % filterLength]==false)
+			if(stripeBloomList->bloomArray[Index][hash % stripeBloomList->filterLength]==false)
 			{
 				false_found = true;
 				break;
 			}
 		}
-		if(false_found)
-		{
-			memset(selectedBlockMask, false, stripeSkipList->blockCount * sizeof(bool));
-			return selectedBlockMask;
-		}
 
+	}
+
+	if(false_found)
+	{
+		memset(selectedBlockMask, false, stripeSkipList->blockCount * sizeof(bool));
+		return selectedBlockMask;
 	}
 	
 	foreach(columnCell, projectedColumnList)

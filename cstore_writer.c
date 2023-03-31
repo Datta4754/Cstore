@@ -45,7 +45,6 @@
 #include<access/hash.h>
 
 
-
 static void CStoreWriteFooter(StringInfo footerFileName, TableFooter *tableFooter);
 static StripeBuffers * CreateEmptyStripeBuffers(uint32 stripeMaxRowCount,
 												uint32 blockRowCount,
@@ -244,17 +243,11 @@ CStoreWriteRow(TableWriteState *writeState, Datum *columnValues, bool *columnNul
 	StripeSkipList *stripeSkipList = writeState->stripeSkipList;
 
 	const unsigned char *key = NULL;
+	size_t keyLen =0;
 
-	uint64 no_of_hashFunctions=0;
-	uint64 filterLength=0;
-	int keyLen =0;
-	uint64 hash = 0;
-
+	uint64 hash =0; 
 
 	StripeBloomList *stripeBloomList = writeState->stripeBloomList;
-
-	bool **bloomArray = NULL;
-
 
 	uint32 columnCount = writeState->tupleDescriptor->natts;
 	TableFooter *tableFooter = writeState->tableFooter;
@@ -292,12 +285,6 @@ CStoreWriteRow(TableWriteState *writeState, Datum *columnValues, bool *columnNul
 
 	blockIndex = stripeBuffers->rowCount / blockRowCount;
 	blockRowIndex = stripeBuffers->rowCount % blockRowCount;
-
-
-	no_of_hashFunctions = stripeBloomList->no_of_hashFunctions;
-	filterLength = stripeBloomList->filterLength;
-
-	bloomArray = stripeBloomList->bloomArray;
 
 
 	for (columnIndex = 0; columnIndex < columnCount; columnIndex++)
@@ -345,54 +332,21 @@ CStoreWriteRow(TableWriteState *writeState, Datum *columnValues, bool *columnNul
 				keyLen = VARSIZE(byteaValue) - VARHDRSZ;
 			}
 
-			/*
-
-			if(columnTypeByValue)
-			{
-				keyLen = sizeof(columnValues[columnIndex]);
-    			char* ptr = (char*)&columnValues[columnIndex];
-
-				stringValue = (char *) palloc(keyLen + 1);
-
-				memcpy(stringValue, ptr, keyLen);
-
-				stringValue[keyLen] = '\0';
-
-    			key = (const unsigned char *) stringValue;	
-
-			}
-			else
-			{
-				
-				bytea *byteaValue = DatumGetByteaP(columnValues[columnIndex]);
-
-				keyLen = VARSIZE(byteaValue) - VARHDRSZ;
-
-				stringValue = (char *) palloc(keyLen + 1);
-
-				memcpy(stringValue, VARDATA(byteaValue), keyLen);
-
-				stringValue[keyLen] = '\0';
-
-				key = (const unsigned char *) stringValue;	
-			}
-				pfree(stringValue);
 			
-			*/
-
-			for(uint64 i=0;i<no_of_hashFunctions;i++)
+	
+			for(uint64 i=0;i<stripeBloomList->no_of_hashFunctions;i++)
 			{
+
 				hash=hash_any_extended(key,keyLen,i);	
 			
-				bloomArray[columnIndex][hash % filterLength] = true;
+				stripeBloomList->bloomArray[columnIndex][hash % stripeBloomList->filterLength] =  true;
 			}
-
-			
+		
+	
 		}
 
 		blockSkipNode->rowCount++;
 	}
-
 
 	stripeSkipList->blockCount = blockIndex + 1;
 
@@ -426,6 +380,10 @@ CStoreWriteRow(TableWriteState *writeState, Datum *columnValues, bool *columnNul
 		MemoryContextSwitchTo(oldContext);
 	}
 }
+
+
+
+
 
 
 /*
@@ -604,18 +562,22 @@ CreateEmptyStripeSkipList(uint32 stripeMaxRowCount, uint32 blockRowCount,
 
 
 
-
-
-
 static StripeBloomList * CreateEmptyStripeBloomList(uint32 columnCount)
 {
 	
 	StripeBloomList *stripeBloomList = NULL;
 	uint32 columnIndex = 0;
 	uint64 no_of_elements = DEFAULT_STRIPE_ROW_COUNT;
-	double falsePositiveProb = 0.01;
+	
+	/*
+	double falsePositiveProb = 0.05;
 	uint64 no_of_hashFunctions= -(log(falsePositiveProb)/log(2));
 	uint64 filterLength = ((no_of_hashFunctions * no_of_elements)/log(2)) / BITS_PER_BYTE;
+	*/
+	
+	uint64 no_of_hashFunctions = BITS_PER_ELEMENT * log(2);
+	double falsePositiveProb = 0.02;
+	uint64 filterLength = ((no_of_elements*log(1/falsePositiveProb))/(log(2)*log(2))) / BITS_PER_BYTE;
 	
 
 	bool **bloomArray= palloc0(columnCount*sizeof(bool*));
@@ -623,7 +585,7 @@ static StripeBloomList * CreateEmptyStripeBloomList(uint32 columnCount)
 	for (columnIndex = 0; columnIndex < columnCount; columnIndex++)
 	{
 		bloomArray[columnIndex] = palloc0(filterLength * sizeof(bool));
-		memset(bloomArray[columnIndex], false, filterLength * sizeof(bool));
+		memset(bloomArray[columnIndex], false, filterLength* sizeof(bool));
 	}
 
 	stripeBloomList = palloc0(sizeof(StripeBloomList));
@@ -636,48 +598,6 @@ static StripeBloomList * CreateEmptyStripeBloomList(uint32 columnCount)
 	
 	return stripeBloomList;
 }
-
-
-/*
-
-static uint32 djb2(Datum s,int k) 
-{
-
-	    //char *str= NULL;
-		
-       // get type information for the datum value
-       
-		//str=DatumGetCString(s);
-			hash_any 
-		unsigned long hash = 5381;
-		
-		//char *str=text_to_cstring(s);
-
-		char *str = DatumGetCString(s);
-
-		for(int i=0;str[i]!='\0';i++)
-		{
-			hash = ((hash << 5) + hash) + str[i]; 
-		}
-		
-		hash = ((hash << 5) + hash) + k;
-		
-        return hash;
-
-        unsigned char str[sizeof(s)];
-        memcpy(str, &s, sizeof(s));
-
-		char ch = (char)k;
-		char temp[2]={ch,'\0'};
-		strcat(str, temp);
-        unsigned int hash = 5381;
-        for(int i=0;i<strlen(str);i++)
-            hash = ((hash << 5) + hash) + str[i];        
-
-        return hash%1000;
-}
-
-*/
 
 
 /*
@@ -1290,3 +1210,42 @@ CopyStringInfo(StringInfo sourceString)
 
 	return targetString;
 }
+
+
+
+
+
+/*
+
+			if(columnTypeByValue)
+			{
+				keyLen = sizeof(columnValues[columnIndex]);
+    			char* ptr = (char*)&columnValues[columnIndex];
+
+				stringValue = (char *) palloc(keyLen + 1);
+
+				memcpy(stringValue, ptr, keyLen);
+
+				stringValue[keyLen] = '\0';
+
+    			key = (const unsigned char *) stringValue;	
+
+			}
+			else
+			{
+				
+				bytea *byteaValue = DatumGetByteaP(columnValues[columnIndex]);
+
+				keyLen = VARSIZE(byteaValue) - VARHDRSZ;
+
+				stringValue = (char *) palloc(keyLen + 1);
+
+				memcpy(stringValue, VARDATA(byteaValue), keyLen);
+
+				stringValue[keyLen] = '\0';
+
+				key = (const unsigned char *) stringValue;	
+			}
+				pfree(stringValue);
+			
+			*/

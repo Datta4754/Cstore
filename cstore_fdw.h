@@ -23,6 +23,9 @@
 #include "utils/rel.h"
 
 
+#define BITS_PER_ELEMENT 8
+#define MAX_HASH_FUNCS 10
+
 /* Defines for valid option names */
 #define OPTION_NAME_FILENAME "filename"
 #define OPTION_NAME_COMPRESSION_TYPE "compression"
@@ -200,13 +203,6 @@ typedef struct StripeSkipList
 
 
 /* Bloom filter definition*/
-
-
-typedef struct BloomParameters
-{
-	    
-
-} BloomParameters; 
 
 
 typedef struct StripeBloomList
@@ -411,3 +407,6 @@ extern StringInfo DecompressBuffer(StringInfo buffer, CompressionType compressio
 
 
 #endif   /* CSTORE_FDW_H */ 
+
+
+

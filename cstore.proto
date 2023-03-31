@@ -11,7 +11,8 @@ enum CompressionType {
 
 message BloomList {
 
-    repeated bool bloomNodeArray=1;
+    optional bytes bloomNodeArray=1;
+    optional CompressionType valueCompressionType = 2;
 }
 
 
